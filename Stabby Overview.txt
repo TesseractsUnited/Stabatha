@@ -1,0 +1,59 @@
+Stabby.exe 
+Version 20260406
+
+Purpose - To record sword impact data on a sensor plate, record impact events, catalog peak force and total energy, maintain recorded impacts, and display impact data and impact analyses.
+	This system is designed to be used in specific testing or for general data collection in public areas.
+
+Sensor and inputs - 
+	load cell - The sensor collecting data is a 100kg S-Type load cell.
+	https://www.robotshop.com//products/type-s-load-cell-100-kg
+	AtoD Converter - The AtoD converter is a Phidgets PhidgetBridge 4-input (SKU:1064_1). It can capture load cell data with a data interval of 8ms.
+	https://www.phidgets.com/?prodid=1270
+	
+	
+Program modes
+	calibration
+		zero load cell - set new zero load on cell
+		calibrate specific weight (eg 10kg or 50kg)
+		
+	Data Aquisition
+		participants can enter specific information before striking.
+			Name (if desired) anonymous if not, can be test name eg:"spear, heavy, no tip"
+			Date/time
+			Event name - EG: Pensic, Practice 20260312, Spear Testing
+			Weapon Type  - rapier, Dagger, long sword, spear, saber
+			Strike Type - thrust, glancing, tip cut?
+		program goes into wait mode, waiting for stab noted by increase in sensor input. strike is recorded (record duration may be default length or determined on the fly by load cell input).
+			program automaticaly records strikes and resets to accept subsequent strikes.  
+			
+	Data review
+		Database
+			Strike events are listed in table form showing name, date/time, total strike energy, peak strike force, strike duration
+		Graph
+			events can be selected to view load cell recorded data.
+			multiple events can be overlaid for comparison
+			
+			
+strike plate:
+	1ft diameter, smaller targets might reduce twisting forces.
+	plain wood vs fabric. 
+	3/4 to 1/2 plate 	
+	
+camera inputs,	
+	strike area, 
+	ideally, sword length
+	
+Timetables
+	Presentable results by pensic
+	End of pay for functional unit
+	jem joust testing, end of may
+	
+spear timps
+	cold steel, purple heart, foam tip
+	
+can we look at PSI on impact
+
+	
+			
+
+	
