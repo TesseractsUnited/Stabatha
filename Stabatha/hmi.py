@@ -314,17 +314,6 @@ class BridgeHMI(tk.Tk):
     # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     def _build_ui(self):
-        # â”€â”€ Slim status bar at the very top â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        top = ttk.Frame(self, padding=(12, 6))
-        top.pack(fill="x")
-        tk.Label(top, text="Stabatha - Calibration Compiling Construct",
-                 fg=TEXT, bg=BG, font=("Segoe UI", 11, "bold")).pack(side="left")
-        self.status_var = tk.StringVar(value="Ready")
-        ttk.Label(top, textvariable=self.status_var, foreground=TEXT).pack(side="right", padx=8)
-
-        ttk.Separator(self, orient="horizontal").pack(fill="x")
-
-        # â”€â”€ Full-width notebook (no pane split) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self._build_right_panel(self)
 
     # â”€â”€ Right panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
