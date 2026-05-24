@@ -322,13 +322,19 @@ class BridgeHMI(tk.Tk):
         # Initialise tk variables used across tabs BEFORE building any tab
         self._cal_status_var = tk.StringVar(value="")
         self._cal_prog_lbl   = tk.StringVar(value="")
+        self._r_event   = tk.StringVar()
+        self._r_name    = tk.StringVar()
+        self._r_weapon  = tk.StringVar()
+        for var in (self._r_event, self._r_name, self._r_weapon):
+            var.trace_add("write", self._sync_strike_meta)
 
         self.notebook = ttk.Notebook(parent)
         self.notebook.pack(fill="both", expand=True, padx=4, pady=4)
 
         for text, builder in [
-            ("  🔴 Record  ",      self._build_record_tab),
+            ("  ⚙  Settings  ",    self._build_record_tab),
             ("  ⚖  Calibrate  ",  self._build_cal_tab),
+            ("  Strike Info  ",    self._build_strike_info_tab),
             ("  📊 Data  ",         self._build_data_tab),
         ]:
             tab = ttk.Frame(self.notebook)
@@ -340,7 +346,7 @@ class BridgeHMI(tk.Tk):
         self.notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed)
 
     # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    #  RECORD TAB
+    #  SETTINGS TAB
     # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     def _build_record_tab(self, parent):
@@ -412,8 +418,8 @@ class BridgeHMI(tk.Tk):
                  font=("Segoe UI", 8), wraplength=200, justify="left").pack(anchor="w")
 
         # Capture
-        cap = ttk.LabelFrame(cfg, text="Capture", padding=10)
-        cap.pack(fill="x", pady=(0, 8))
+        cap = ttk.LabelFrame(cfg, text="Capture", padding=6) # was 10
+        cap.pack(fill="x", pady=(0, 6)) # 6 was 8 
         ttk.Label(cap, text="Post-trigger points", foreground=TEXT, font=("Segoe UI", 8)).pack(anchor="w")
         self._r_npoints = tk.IntVar(value=100)
         ttk.Spinbox(cap, from_=10, to=10000, increment=10,
@@ -424,50 +430,6 @@ class BridgeHMI(tk.Tk):
         ttk.Spinbox(cap, from_=0, to=500, increment=1,
                     textvariable=self._r_pre_buf, width=8).pack(anchor="w", pady=(2, 0))
 
-        # Strike metadata (snapshotted at trigger)
-        info = ttk.LabelFrame(cfg, text="Strike Info", padding=10)
-        info.pack(fill="x", pady=(0, 8))
-
-        self._r_event = tk.StringVar()
-        self._r_name = tk.StringVar()
-        self._r_weapon = tk.StringVar()
-        for var in (self._r_event, self._r_name, self._r_weapon):
-            var.trace_add("write", self._sync_strike_meta)
-
-        ttk.Label(info, text="Event *", foreground=TEXT, font=("Segoe UI", 8)).pack(anchor="w")
-        ttk.Entry(info, textvariable=self._r_event, width=22).pack(anchor="w", pady=(2, 6))
-        ttk.Label(info, text="Name *", foreground=TEXT, font=("Segoe UI", 8)).pack(anchor="w")
-        ttk.Entry(info, textvariable=self._r_name, width=22).pack(anchor="w", pady=(2, 6))
-        ttk.Label(info, text="Weapon Type *", foreground=TEXT, font=("Segoe UI", 8)).pack(anchor="w")
-        ttk.Entry(info, textvariable=self._r_weapon, width=22).pack(anchor="w", pady=(2, 6))
-        ttk.Label(info, text="Notes", foreground=TEXT, font=("Segoe UI", 8)).pack(anchor="w")
-        self._r_notes = tk.Text(info, bg=BG2, fg=TEXT, font=("Segoe UI", 9),
-                                relief="flat", width=24, height=2, insertbackground=TEXT)
-        self._r_notes.pack(anchor="w", pady=(2, 0))
-        self._r_notes.bind("<KeyRelease>", self._sync_strike_meta)
-
-        # Connection buttons
-        conn_row = ttk.Frame(cfg)
-        conn_row.pack(fill="x", pady=(4, 4))
-        self._btn_connect = ttk.Button(conn_row, text="â»  Connect",
-                                        style="Green.TButton", command=self._rec_connect)
-        self._btn_connect.pack(side="left", expand=True, fill="x", padx=(0, 4))
-        self._btn_disconnect = ttk.Button(conn_row, text="â»  Disconnect",
-                                           style="Red.TButton", command=self._rec_disconnect,
-                                           state="disabled")
-        self._btn_disconnect.pack(side="left", expand=True, fill="x")
-
-        # Arm / Disarm buttons
-        arm_row = ttk.Frame(cfg)
-        arm_row.pack(fill="x", pady=(0, 4))
-        self._btn_arm = ttk.Button(arm_row, text="Arm Trigger",
-                                    style="Accent.TButton", command=self._rec_arm,
-                                    state="disabled")
-        self._btn_arm.pack(side="left", expand=True, fill="x", padx=(0, 4))
-        self._btn_disarm = ttk.Button(arm_row, text="Disarm",
-                                       command=self._rec_disarm, state="disabled")
-        self._btn_disarm.pack(side="left", expand=True, fill="x")
-
         if not HAS_PHIDGET:
             ttk.Label(cfg, text="Phidget22 not installed.\nRecording unavailable.",
                       foreground=YELLOW, font=("Segoe UI", 9), justify="center").pack(pady=(10, 0))
@@ -476,38 +438,28 @@ class BridgeHMI(tk.Tk):
         live = ttk.Frame(parent)
         live.grid(row=0, column=1, sticky="nsew")
 
-        # State banner + counter
-        banner = ttk.Frame(live, padding=(0, 0, 0, 6))
-        banner.pack(fill="x")
         self._state_var = tk.StringVar(value="IDLE")
-        self._state_lbl = tk.Label(banner, textvariable=self._state_var,
-                                    fg=TEXT, bg=BG, font=("Segoe UI", 13, "bold"))
-        self._state_lbl.pack(side="left")
         self._prog_lbl = tk.StringVar(value="")
-        tk.Label(banner, textvariable=self._prog_lbl,
-                 fg=TEXT, bg=BG, font=("Consolas", 11)).pack(side="right", padx=12)
 
-        ttk.Separator(live, orient="horizontal").pack(fill="x", pady=(0, 8))
+        conn_row = ttk.Frame(live)
+        conn_row.pack(fill="x", pady=(0, 4))
+        self._btn_connect = ttk.Button(conn_row, text="⏻  Connect",
+                                        style="Green.TButton", command=self._rec_connect)
+        self._btn_connect.pack(side="left", expand=True, fill="x", padx=(0, 4))
+        self._btn_disconnect = ttk.Button(conn_row, text="⏻  Disconnect",
+                                           style="Red.TButton", command=self._rec_disconnect,
+                                           state="disabled")
+        self._btn_disconnect.pack(side="left", expand=True, fill="x")
 
-        # Channel 0 gauge
-        gauge_frame = ttk.LabelFrame(live, text="Channel 0  â€”  Live Value  (V/V)", padding=12)
-        gauge_frame.pack(fill="x", pady=(0, 8))
-
-        row = ttk.Frame(gauge_frame)
-        row.pack(fill="x")
-        tk.Label(row, text="CH 0", fg=TEXT, bg=BG,
-                 font=("Consolas", 11, "bold"), width=5).pack(side="left")
-        self._gauge_cv = tk.Canvas(row, height=20, bg=BG2, highlightthickness=0)
-        self._gauge_cv.pack(side="left", fill="x", expand=True, padx=8)
-        self._gauge_var = tk.StringVar(value="---")
-        tk.Label(row, textvariable=self._gauge_var, fg=TEXT, bg=BG,
-                 font=("Consolas", 11), width=16, anchor="e").pack(side="right")
-
-        # Calibrated lbf readout (shown only when calibrated)
-        self._live_lbf_var = tk.StringVar(value="")
-        self._live_lbf_lbl = tk.Label(gauge_frame, textvariable=self._live_lbf_var,
-                                       fg=ORANGE, bg=BG, font=("Consolas", 11))
-        self._live_lbf_lbl.pack(anchor="e", pady=(4, 0))
+        arm_row = ttk.Frame(live)
+        arm_row.pack(fill="x", pady=(0, 8))
+        self._btn_arm = ttk.Button(arm_row, text="Arm Trigger",
+                                    style="Accent.TButton", command=self._rec_arm,
+                                    state="disabled")
+        self._btn_arm.pack(side="left", expand=True, fill="x", padx=(0, 4))
+        self._btn_disarm = ttk.Button(arm_row, text="Disarm",
+                                       command=self._rec_disarm, state="disabled")
+        self._btn_disarm.pack(side="left", expand=True, fill="x")
 
         # Capture log
         log_frame = ttk.LabelFrame(live, text="Capture Log", padding=(6, 4))
@@ -522,6 +474,25 @@ class BridgeHMI(tk.Tk):
         for tag, colour in [("info", TEXT), ("ok", GREEN), ("trigger", YELLOW),
                              ("error", RED), ("done", TEXT)]:
             self._log.tag_configure(tag, foreground=colour)
+
+    def _build_strike_info_tab(self, parent):
+        body = ttk.Frame(parent, padding=(16, 12))
+        body.pack(fill="both", expand=True)
+
+        info = ttk.LabelFrame(body, text="Strike Info", padding=10)
+        info.pack(fill="x", pady=(0, 8))
+
+        ttk.Label(info, text="Event *", foreground=TEXT, font=("Segoe UI", 8)).pack(anchor="w")
+        ttk.Entry(info, textvariable=self._r_event, width=22).pack(anchor="w", pady=(2, 6))
+        ttk.Label(info, text="Name *", foreground=TEXT, font=("Segoe UI", 8)).pack(anchor="w")
+        ttk.Entry(info, textvariable=self._r_name, width=22).pack(anchor="w", pady=(2, 6))
+        ttk.Label(info, text="Weapon Type *", foreground=TEXT, font=("Segoe UI", 8)).pack(anchor="w")
+        ttk.Entry(info, textvariable=self._r_weapon, width=22).pack(anchor="w", pady=(2, 6))
+        ttk.Label(info, text="Notes", foreground=TEXT, font=("Segoe UI", 8)).pack(anchor="w")
+        self._r_notes = tk.Text(info, bg=BG2, fg=TEXT, font=("Segoe UI", 9),
+                                relief="flat", width=24, height=2, insertbackground=TEXT)
+        self._r_notes.pack(anchor="w", pady=(2, 0))
+        self._r_notes.bind("<KeyRelease>", self._sync_strike_meta)
 
     # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     #  CALIBRATION TAB
@@ -700,7 +671,7 @@ class BridgeHMI(tk.Tk):
             return False
         if self._engine.latest is None:
             messagebox.showwarning("No live data",
-                                    "No readings yet â€” connect the device via the Record tab first.")
+                                    "No readings yet — connect the device via the Settings tab first.")
             return False
         return True
 
@@ -1097,22 +1068,8 @@ class BridgeHMI(tk.Tk):
         self._log.delete("1.0", "end")
         self._log.configure(state="disabled")
 
-    def _draw_gauge(self, value: float | None):
-        cv = self._gauge_cv
-        cv.delete("all")
-        W   = cv.winfo_width() or 300
-        H   = cv.winfo_height() or 20
-        mid = W // 2
-        cv.create_rectangle(2, H // 2 - 4, W - 2, H // 2 + 4, fill=BG2, outline="")
-        if value is not None:
-            clamp = max(-1.0, min(1.0, value))
-            if clamp >= 0:
-                x1, x2 = mid, mid + int(clamp * (W // 2 - 4))
-            else:
-                x1, x2 = mid + int(clamp * (W // 2 - 4)), mid
-            if x1 != x2:
-                cv.create_rectangle(x1, H // 2 - 4, x2, H // 2 + 4, fill=TEXT, outline="")
-        cv.create_line(mid, 2, mid, H - 2, fill=TEXT, width=1)
+    def _set_banner(self, text: str, colour: str):
+        self._state_var.set(text)
 
     # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     #  Recorder polling
@@ -1121,14 +1078,6 @@ class BridgeHMI(tk.Tk):
     def _poll_recorder(self):
         e     = self._engine
         state = e.state
-        v     = e.latest
-
-        # â”€â”€ Gauge update â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        self._gauge_var.set(f"{v:+.6f} V/V" if v is not None else "---")
-        self._draw_gauge(v)
-        self._live_lbf_var.set(
-            f"{self._cal.to_lbf(v):+.4f}  lbf"
-            if (v is not None and self._cal.is_calibrated) else "")
 
         # â”€â”€ State transitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if state != self._prev_state:
@@ -1217,10 +1166,6 @@ class BridgeHMI(tk.Tk):
                 self._open_strike_feedback(e.saved_path)
 
         self.after(80, self._poll_recorder)
-
-    def _set_banner(self, text: str, colour: str):
-        self._state_var.set(text)
-        self._state_lbl.configure(fg=colour)
 
     # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     #  Folder / file helpers
