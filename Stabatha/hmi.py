@@ -1,8 +1,9 @@
 """Tkinter HMI: tabs, dialogs, charts, and data views."""
 
+import csv
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 from datetime import datetime
 from pathlib import Path
 
@@ -764,6 +765,8 @@ class BridgeHMI(tk.Tk):
 
         ttk.Button(tb, text="⟳ Refresh", style="Accent.TButton",
                    command=self.refresh_file_list).pack(side="right")
+        ttk.Button(tb, text="Export CSV",
+                   command=self._files_export_csv).pack(side="right", padx=(0, 6))
         ttk.Button(tb, text="✏ Edit Metadata",
                    command=self._files_edit_metadata).pack(side="right", padx=(0, 6))
         ttk.Button(tb, text="🗑 Delete",
@@ -805,6 +808,48 @@ class BridgeHMI(tk.Tk):
         # Sort state
         self._files_sort_col = "id"
         self._files_sort_rev = True
+
+    def _files_export_csv(self):
+        """Export the strike file table to a user-named CSV file."""
+        if not getattr(self, "strike_files", None):
+            self.refresh_file_list()
+        if not self.strike_files:
+            messagebox.showinfo("No data", "There are no strike records to export.")
+            return
+
+        path = filedialog.asksaveasfilename(
+            title="Export strike data",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile="strike_data.csv",
+        )
+        if not path:
+            return
+
+        headers = [
+            "ID", "Event", "Name", "Weapon Type",
+            "Peak Force (lbf)", "Impulse", "Notes", "Calibration Feedback",
+        ]
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                for meta in self.strike_files:
+                    writer.writerow([
+                        meta["id"],
+                        meta["event"],
+                        meta["name"],
+                        meta["weapon_type"],
+                        meta["peak_force_lbf"],
+                        meta["impulse"],
+                        meta["notes"],
+                        meta["feedback"],
+                    ])
+        except OSError as exc:
+            messagebox.showerror("Export failed", str(exc))
+            return
+
+        messagebox.showinfo("Export complete", f"Saved to:\n{path}")
 
     def _files_edit_metadata(self):
         """Open editor for the currently selected strike file."""
