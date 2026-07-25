@@ -64,7 +64,8 @@ def update_strike_metadata(path: str, strike: StrikeData):
     with open(path) as f:
         data = json.load(f)
     meta = data.setdefault("metadata", {})
-    for key in ("event", "name", "weapon_type", "notes", "user_calibration_feedback"):
+    for key in ("event", "name", "weapon_type", "kingdom", "rank", "notes",
+                "user_calibration_feedback"):
         value = getattr(strike, key)
         if key == "user_calibration_feedback":
             value = normalize_calibration_feedback(value)

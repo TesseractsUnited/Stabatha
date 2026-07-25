@@ -36,6 +36,8 @@ STRIKE_META_FIELDS = [
     "event",
     "name",
     "weapon_type",
+    "kingdom",
+    "rank",
     "notes",
     "user_calibration_feedback",
     "peak_force_lbf",

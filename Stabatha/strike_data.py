@@ -41,6 +41,8 @@ class StrikeData:
     event: str = ""
     name: str = ""
     weapon_type: str = ""
+    kingdom: str = ""
+    rank: str = ""
     notes: str = ""
     user_calibration_feedback: float | None = None
     peak_force_lbf: float = 0.0
@@ -56,11 +58,15 @@ class StrikeData:
         event: str = "",
         name: str = "",
         weapon_type: str = "",
+        kingdom: str = "",
+        rank: str = "",
         notes: str = "",
     ):
         self.event = event.strip()
         self.name = name.strip()
         self.weapon_type = weapon_type.strip()
+        self.kingdom = kingdom.strip()
+        self.rank = rank.strip()
         self.notes = notes.strip()
 
     def append_sample(
@@ -126,6 +132,8 @@ class StrikeData:
                 "event": self.event,
                 "name": self.name,
                 "weapon_type": self.weapon_type,
+                "kingdom": self.kingdom,
+                "rank": self.rank,
                 "notes": self.notes,
                 "user_calibration_feedback": self.user_calibration_feedback,
                 "peak_force_lbf": self.peak_force_lbf,
@@ -148,6 +156,8 @@ class StrikeData:
             event=meta.get("event", ""),
             name=meta.get("name", ""),
             weapon_type=meta.get("weapon_type", ""),
+            kingdom=meta.get("kingdom", ""),
+            rank=meta.get("rank", ""),
             notes=meta.get("notes", ""),
             user_calibration_feedback=feedback,
             peak_force_lbf=float(meta.get("peak_force_lbf", 0.0) or 0.0),

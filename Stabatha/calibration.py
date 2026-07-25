@@ -42,7 +42,7 @@ class CalibrationStore:
     def set_cal_point(self, raw_avg: float, load_lbf: float):
         span = raw_avg - self._d["zero_offset"]
         if abs(span) < 1e-12:
-            raise ValueError("Cal point too close to zero — apply a larger load.")
+            raise ValueError("Cal point too close to zero - apply a larger load.")
         self._d["cal_raw"] = raw_avg
         self._d["cal_load_lbf"] = load_lbf
         self._d["scale_factor"] = load_lbf / span

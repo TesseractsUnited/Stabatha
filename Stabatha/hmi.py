@@ -32,6 +32,13 @@ try:
 except ImportError:
     HAS_MPL = False
 
+KINGDOMS = (
+    "NA", "None", "Æthelmearc", "An Tir", "Ansteorra", "Artemisia", "Atenveldt",
+    "Atlantia", "Avacal", "Caid", "Calontir", "Drachenwald", "Ealdormere",
+    "East Kingdom", "Gleann Abhann", "Lochac", "Meridies", "Middle Kingdom",
+    "Northshield", "Outlands", "Trimaris", "West Kingdom",
+)
+
 
 class StrikeFeedbackDialog(tk.Toplevel):
     """Non-modal post-strike calibration feedback (slider 0-5)."""
@@ -115,6 +122,8 @@ class StrikeEditDialog(tk.Toplevel):
         self._v_event = tk.StringVar(value=strike.event)
         self._v_name = tk.StringVar(value=strike.name)
         self._v_weapon = tk.StringVar(value=strike.weapon_type)
+        self._v_kingdom = tk.StringVar(value=strike.kingdom or "NA")
+        self._v_rank = tk.StringVar(value=strike.rank or "NA")
 
         for r, label, var in [
             (0, "Event", self._v_event),
@@ -125,17 +134,30 @@ class StrikeEditDialog(tk.Toplevel):
                 row=r, column=0, sticky="e", padx=(0, 10), pady=5)
             ttk.Entry(form, textvariable=var, width=28).grid(row=r, column=1, sticky="ew", pady=5)
 
+        tk.Label(form, text="Kingdom", fg=TEXT, bg=BG, width=14, anchor="e").grid(
+            row=3, column=0, sticky="e", padx=(0, 10), pady=5)
+        ttk.Combobox(form, textvariable=self._v_kingdom, values=KINGDOMS,
+                     state="readonly", width=26).grid(row=3, column=1, sticky="ew", pady=5)
+
+        tk.Label(form, text="Rank", fg=TEXT, bg=BG, width=14, anchor="e").grid(
+            row=4, column=0, sticky="e", padx=(0, 10), pady=5)
+        rank_row = ttk.Frame(form)
+        rank_row.grid(row=4, column=1, sticky="w", pady=5)
+        for value in ("NA", "None", "Blue", "Yellow", "White"):
+            ttk.Radiobutton(rank_row, text=value, variable=self._v_rank,
+                            value=value).pack(side="left", padx=(0, 8))
+
         tk.Label(form, text="Notes", fg=TEXT, bg=BG, anchor="e").grid(
-            row=3, column=0, sticky="ne", padx=(0, 10), pady=5)
+            row=5, column=0, sticky="ne", padx=(0, 10), pady=5)
         self._notes_box = tk.Text(form, bg=BG2, fg=TEXT, font=("Segoe UI", 9),
                                   relief="flat", width=30, height=3)
         self._notes_box.insert("1.0", strike.notes)
-        self._notes_box.grid(row=3, column=1, sticky="ew", pady=5)
+        self._notes_box.grid(row=5, column=1, sticky="ew", pady=5)
 
         tk.Label(form, text="Cal Feedback", fg=TEXT, bg=BG, anchor="e").grid(
-            row=4, column=0, sticky="e", padx=(0, 10), pady=5)
+            row=6, column=0, sticky="e", padx=(0, 10), pady=5)
         feedback_row = ttk.Frame(form)
-        feedback_row.grid(row=4, column=1, sticky="ew", pady=5)
+        feedback_row.grid(row=6, column=1, sticky="ew", pady=5)
 
         self._feedback_unset = tk.BooleanVar(
             value=strike.user_calibration_feedback is None)
@@ -143,7 +165,7 @@ class StrikeEditDialog(tk.Toplevel):
             value=strike.user_calibration_feedback if strike.user_calibration_feedback is not None else 0.0)
         self._feedback_display = tk.StringVar(
             value=f"{strike.user_calibration_feedback:.1f}"
-            if strike.user_calibration_feedback is not None else "—")
+            if strike.user_calibration_feedback is not None else "--")
 
         self._feedback_scale = tk.Scale(
             feedback_row, from_=0, to=5, orient="horizontal",
@@ -181,7 +203,7 @@ class StrikeEditDialog(tk.Toplevel):
         unset = self._feedback_unset.get()
         self._feedback_scale.configure(state="disabled" if unset else "normal")
         if unset:
-            self._feedback_display.set("—")
+            self._feedback_display.set("--")
         else:
             self._on_feedback_scale(self._feedback_var.get())
 
@@ -189,6 +211,8 @@ class StrikeEditDialog(tk.Toplevel):
         self._strike.event = self._v_event.get().strip()
         self._strike.name = self._v_name.get().strip()
         self._strike.weapon_type = self._v_weapon.get().strip()
+        self._strike.kingdom = self._v_kingdom.get().strip()
+        self._strike.rank = self._v_rank.get().strip()
         self._strike.notes = self._notes_box.get("1.0", "end-1c").strip()
         if self._feedback_unset.get():
             self._strike.user_calibration_feedback = None
@@ -219,7 +243,10 @@ class BridgeHMI(tk.Tk):
         self._data_headers: list[str]  = []
         self._data_rows:    list[list] = []
 
-        self._strike_meta = {"event": "", "name": "", "weapon_type": "", "notes": ""}
+        self._strike_meta = {
+            "event": "", "name": "", "weapon_type": "",
+            "kingdom": "NA", "rank": "NA", "notes": "",
+        }
         self._pending_feedback = None
         self._data_tab_index: int | None = None
 
@@ -253,9 +280,9 @@ class BridgeHMI(tk.Tk):
         if HAS_PHIDGET:
             self.after(500, self._auto_connect)
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════════════════
     #  Styles
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════════════════
 
     def _apply_style(self):
         s = ttk.Style(self)
@@ -306,28 +333,21 @@ class BridgeHMI(tk.Tk):
         s.map("Data.Treeview",
               background=[("selected", BG2)],
               foreground=[("selected", TEXT)])
-        s.configure("TScrollbar",        background=BG2, troughcolor=BG, arrowcolor=TEXT, relief="flat")
+        s.configure("TScrollbar",        background=BG2, troughcolor=BG, arrowcolor=TEXT, relief="flat",
+                    width=28, arrowsize=28)
+        s.configure("Vertical.TScrollbar",   width=28, arrowsize=28)
+        s.configure("Horizontal.TScrollbar", width=28, arrowsize=28)
         s.configure("TSeparator",        background=BG2)
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════════════════
     #  Top bar + layout
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════════════════
 
     def _build_ui(self):
-        # â”€â”€ Slim status bar at the very top â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        top = ttk.Frame(self, padding=(12, 6))
-        top.pack(fill="x")
-        tk.Label(top, text="Stabatha - Calibration Compiling Construct",
-                 fg=TEXT, bg=BG, font=("Segoe UI", 11, "bold")).pack(side="left")
-        self.status_var = tk.StringVar(value="Ready")
-        ttk.Label(top, textvariable=self.status_var, foreground=TEXT).pack(side="right", padx=8)
-
-        ttk.Separator(self, orient="horizontal").pack(fill="x")
-
-        # â”€â”€ Full-width notebook (no pane split) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Full-width notebook (no pane split) ───────────────────────────────
         self._build_right_panel(self)
 
-    # â”€â”€ Right panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Right panel ───────────────────────────────────────────────────────────
 
     def _build_right_panel(self, parent):
         # Initialise tk variables used across tabs BEFORE building any tab
@@ -338,9 +358,10 @@ class BridgeHMI(tk.Tk):
         self.notebook.pack(fill="both", expand=True, padx=4, pady=4)
 
         for text, builder in [
-            ("  🔴 Record  ",      self._build_record_tab),
-            ("  ⚖  Calibrate  ",  self._build_cal_tab),
-            ("  📊 Data  ",         self._build_data_tab),
+            ("  Setup  ",       self._build_record_tab),
+            ("  Calibrate  ",   self._build_cal_tab),
+            ("  Stab Info  ",   self._build_stab_info_tab),
+            ("  Data  ",        self._build_data_tab),
         ]:
             tab = ttk.Frame(self.notebook)
             self.notebook.add(tab, text=text)
@@ -350,9 +371,9 @@ class BridgeHMI(tk.Tk):
 
         self.notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed)
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════════════════
     #  RECORD TAB
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════════════════
 
     def _build_record_tab(self, parent):
         cols = ttk.Frame(parent)
@@ -396,31 +417,14 @@ class BridgeHMI(tk.Tk):
         trg = ttk.LabelFrame(cfg, text="Trigger  (Channel 0)", padding=10)
         trg.pack(fill="x", pady=(0, 8))
 
-        # Threshold unit toggle
-        unit_row = ttk.Frame(trg)
-        unit_row.pack(fill="x", pady=(0, 6))
-        ttk.Label(unit_row, text="Threshold unit:", foreground=TEXT,
-                  font=("Segoe UI", 8)).pack(side="left")
-        self._r_trg_unit = tk.StringVar(value="V/V")
-        ttk.Radiobutton(unit_row, text="V/V", variable=self._r_trg_unit,
-                        value="V/V",  command=self._on_trg_unit_change).pack(side="left", padx=(8, 4))
-        ttk.Radiobutton(unit_row, text="lbf", variable=self._r_trg_unit,
-                        value="lbf",  command=self._on_trg_unit_change).pack(side="left")
-
-        self._r_threshold = tk.DoubleVar(value=0.01)
-        self._trg_unit_lbl = tk.StringVar(value="V/V")
+        self._r_threshold = tk.DoubleVar(value=1.0)
         thresh_row = ttk.Frame(trg)
         thresh_row.pack(fill="x", pady=(0, 6))
         ttk.Label(thresh_row, text="Threshold:", foreground=TEXT,
                   font=("Segoe UI", 8)).pack(side="left")
         ttk.Entry(thresh_row, textvariable=self._r_threshold, width=12).pack(side="left", padx=6)
-        tk.Label(thresh_row, textvariable=self._trg_unit_lbl, fg=TEXT, bg=BG,
+        tk.Label(thresh_row, text="lbf", fg=TEXT, bg=BG,
                  font=("Segoe UI", 8)).pack(side="left")
-
-        # Cal-not-available warning (shown when lbf selected but not calibrated)
-        self._trg_cal_warn = tk.StringVar(value="")
-        tk.Label(trg, textvariable=self._trg_cal_warn, fg=YELLOW, bg=BG,
-                 font=("Segoe UI", 8), wraplength=200, justify="left").pack(anchor="w")
 
         # Capture
         cap = ttk.LabelFrame(cfg, text="Capture  (post-trigger only)", padding=10)
@@ -430,65 +434,11 @@ class BridgeHMI(tk.Tk):
         self._r_max_record_s = tk.DoubleVar(value=3.0)
         ttk.Spinbox(cap, from_=0.5, to=30.0, increment=0.5,
                     textvariable=self._r_max_record_s, width=8).pack(anchor="w", pady=(2, 8))
-        ttk.Label(cap, text="Recording stops early once force drops below the "
-                  "trigger threshold.", foreground=TEXT, font=("Segoe UI", 8),
-                  wraplength=220, justify="left").pack(anchor="w", pady=(0, 8))
         ttk.Label(cap, text="Trigger reset hold (s)", foreground=TEXT,
                   font=("Segoe UI", 8)).pack(anchor="w")
         self._r_reset_hold_s = tk.DoubleVar(value=3.0)
         ttk.Spinbox(cap, from_=0.1, to=30.0, increment=0.5,
                     textvariable=self._r_reset_hold_s, width=8).pack(anchor="w", pady=(2, 0))
-        ttk.Label(cap, text="Force must stay below the trigger threshold this "
-                  "long before the trigger re-arms.", foreground=TEXT,
-                  font=("Segoe UI", 8), wraplength=220, justify="left").pack(anchor="w")
-
-        # Strike metadata (snapshotted at trigger)
-        info = ttk.LabelFrame(cfg, text="Strike Info", padding=10)
-        info.pack(fill="x", pady=(0, 8))
-
-        self._r_event = tk.StringVar()
-        self._r_name = tk.StringVar()
-        self._r_weapon = tk.StringVar()
-        for var in (self._r_event, self._r_name, self._r_weapon):
-            var.trace_add("write", self._sync_strike_meta)
-
-        ttk.Label(info, text="Event *", foreground=TEXT, font=("Segoe UI", 8)).pack(anchor="w")
-        ttk.Entry(info, textvariable=self._r_event, width=22).pack(anchor="w", pady=(2, 6))
-        ttk.Label(info, text="Name *", foreground=TEXT, font=("Segoe UI", 8)).pack(anchor="w")
-        ttk.Entry(info, textvariable=self._r_name, width=22).pack(anchor="w", pady=(2, 6))
-        ttk.Label(info, text="Weapon Type *", foreground=TEXT, font=("Segoe UI", 8)).pack(anchor="w")
-        ttk.Entry(info, textvariable=self._r_weapon, width=22).pack(anchor="w", pady=(2, 6))
-        ttk.Label(info, text="Notes", foreground=TEXT, font=("Segoe UI", 8)).pack(anchor="w")
-        self._r_notes = tk.Text(info, bg=BG2, fg=TEXT, font=("Segoe UI", 9),
-                                relief="flat", width=24, height=2, insertbackground=TEXT)
-        self._r_notes.pack(anchor="w", pady=(2, 0))
-        self._r_notes.bind("<KeyRelease>", self._sync_strike_meta)
-
-        # Connection buttons
-        conn_row = ttk.Frame(cfg)
-        conn_row.pack(fill="x", pady=(4, 4))
-        self._btn_connect = ttk.Button(conn_row, text="â»  Connect",
-                                        style="Green.TButton", command=self._rec_connect)
-        self._btn_connect.pack(side="left", expand=True, fill="x", padx=(0, 4))
-        self._btn_disconnect = ttk.Button(conn_row, text="â»  Disconnect",
-                                           style="Red.TButton", command=self._rec_disconnect,
-                                           state="disabled")
-        self._btn_disconnect.pack(side="left", expand=True, fill="x")
-
-        # Arm / Disarm buttons
-        arm_row = ttk.Frame(cfg)
-        arm_row.pack(fill="x", pady=(0, 4))
-        self._btn_arm = ttk.Button(arm_row, text="Arm Trigger",
-                                    style="Accent.TButton", command=self._rec_arm,
-                                    state="disabled")
-        self._btn_arm.pack(side="left", expand=True, fill="x", padx=(0, 4))
-        self._btn_disarm = ttk.Button(arm_row, text="Disarm",
-                                       command=self._rec_disarm, state="disabled")
-        self._btn_disarm.pack(side="left", expand=True, fill="x")
-
-        if not HAS_PHIDGET:
-            ttk.Label(cfg, text="Phidget22 not installed.\nRecording unavailable.",
-                      foreground=YELLOW, font=("Segoe UI", 9), justify="center").pack(pady=(10, 0))
 
     def _build_live_panel(self, parent):
         live = ttk.Frame(parent)
@@ -508,24 +458,51 @@ class BridgeHMI(tk.Tk):
         ttk.Separator(live, orient="horizontal").pack(fill="x", pady=(0, 8))
 
         # Channel 0 gauge
-        gauge_frame = ttk.LabelFrame(live, text="Channel 0  â€”  Live Value  (V/V)", padding=12)
-        gauge_frame.pack(fill="x", pady=(0, 8))
+        gauge_frame = ttk.LabelFrame(live, text="Channel 0  -  Live Value  (V/V)", padding=6)
+        gauge_frame.pack(fill="x", pady=(0, 4))
 
         row = ttk.Frame(gauge_frame)
         row.pack(fill="x")
         tk.Label(row, text="CH 0", fg=TEXT, bg=BG,
                  font=("Consolas", 11, "bold"), width=5).pack(side="left")
-        self._gauge_cv = tk.Canvas(row, height=20, bg=BG2, highlightthickness=0)
-        self._gauge_cv.pack(side="left", fill="x", expand=True, padx=8)
+
+        # Calibrated lbf readout (shown only when calibrated) -- packed
+        # first so it reserves its space on the right before the raw
+        # V/V readout expands to fill what's left.
+        self._live_lbf_var = tk.StringVar(value="")
+        self._live_lbf_lbl = tk.Label(row, textvariable=self._live_lbf_var,
+                                       fg=ORANGE, bg=BG, font=("Consolas", 11))
+        self._live_lbf_lbl.pack(side="right")
+
         self._gauge_var = tk.StringVar(value="---")
         tk.Label(row, textvariable=self._gauge_var, fg=TEXT, bg=BG,
-                 font=("Consolas", 11), width=16, anchor="e").pack(side="right")
+                 font=("Consolas", 11), anchor="e").pack(side="left", fill="x", expand=True, padx=8)
 
-        # Calibrated lbf readout (shown only when calibrated)
-        self._live_lbf_var = tk.StringVar(value="")
-        self._live_lbf_lbl = tk.Label(gauge_frame, textvariable=self._live_lbf_var,
-                                       fg=ORANGE, bg=BG, font=("Consolas", 11))
-        self._live_lbf_lbl.pack(anchor="e", pady=(4, 0))
+        # Connection buttons
+        conn_row = ttk.Frame(live)
+        conn_row.pack(fill="x", pady=(0, 2))
+        self._btn_connect = ttk.Button(conn_row, text="Connect",
+                                        style="Green.TButton", command=self._rec_connect)
+        self._btn_connect.pack(side="left", expand=True, fill="x", padx=(0, 4))
+        self._btn_disconnect = ttk.Button(conn_row, text="Disconnect",
+                                           style="Red.TButton", command=self._rec_disconnect,
+                                           state="disabled")
+        self._btn_disconnect.pack(side="left", expand=True, fill="x")
+
+        # Arm / Disarm buttons
+        arm_row = ttk.Frame(live)
+        arm_row.pack(fill="x", pady=(0, 4))
+        self._btn_arm = ttk.Button(arm_row, text="Arm Trigger",
+                                    style="Accent.TButton", command=self._rec_arm,
+                                    state="disabled")
+        self._btn_arm.pack(side="left", expand=True, fill="x", padx=(0, 4))
+        self._btn_disarm = ttk.Button(arm_row, text="Disarm",
+                                       command=self._rec_disarm, state="disabled")
+        self._btn_disarm.pack(side="left", expand=True, fill="x")
+
+        if not HAS_PHIDGET:
+            ttk.Label(live, text="Phidget22 not installed.\nRecording unavailable.",
+                      foreground=YELLOW, font=("Segoe UI", 9), justify="center").pack(pady=(10, 0))
 
         # Capture log
         log_frame = ttk.LabelFrame(live, text="Capture Log", padding=(6, 4))
@@ -541,15 +518,15 @@ class BridgeHMI(tk.Tk):
                              ("error", RED), ("done", TEXT)]:
             self._log.tag_configure(tag, foreground=colour)
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════════════════
     #  CALIBRATION TAB
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════════════════
 
     def _build_cal_tab(self, parent):
         # Header
-        hdr = ttk.Frame(parent, padding=(12, 10, 12, 4))
+        hdr = ttk.Frame(parent, padding=(12, 6, 12, 2))
         hdr.pack(fill="x")
-        tk.Label(hdr, text="âš–  Channel 0 Calibration  â€”  V/V  â†’  lbf",
+        tk.Label(hdr, text="Channel 0 Calibration  -  V/V -> lbf",
                  fg=TEXT, bg=BG, font=("Segoe UI", 12, "bold")).pack(side="left")
         # Status text (right-aligned in header)
         tk.Label(hdr, textvariable=self._cal_prog_lbl,
@@ -558,29 +535,29 @@ class BridgeHMI(tk.Tk):
         ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=8)
 
         # Instructions
-        note_frame = ttk.Frame(parent, padding=(14, 8, 14, 4))
+        note_frame = ttk.Frame(parent, padding=(14, 4, 14, 2))
         note_frame.pack(fill="x")
         note = (
-            "Step 1 â€” Remove all load, then click  \"âŠ™ Capture Zero\".\n"
-            "Step 2 â€” Apply a known reference load (lbf), enter the value, "
-            "then click  \"âŠ™ Capture Cal Point\".\n"
+            "Step 1 - Remove all load, then click  \"Capture Zero\".\n"
+            "Step 2 - Apply a known reference load (lbf), enter the value, "
+            "then click  \"Capture Cal Point\".\n"
             f"Each step averages  {CAL_SAMPLES}  live samples (~2.5 s).  "
-            "Click  \"ðŸ’¾ Save\"  when done."
+            "Click  \"Save\"  when done."
         )
         tk.Label(note_frame, text=note, fg=TEXT, bg=BG,
                  font=("Segoe UI", 9), justify="left").pack(anchor="w")
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=8, pady=(4, 0))
 
-        # â”€â”€ Main calibration area â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        body = ttk.Frame(parent, padding=(16, 12))
+        # ── Main calibration area ─────────────────────────────────────────────
+        body = ttk.Frame(parent, padding=(16, 8))
         body.pack(fill="both", expand=True)
         body.columnconfigure(0, weight=1)
         body.columnconfigure(1, weight=1)
 
         # Live readout card
-        live_lf = ttk.LabelFrame(body, text="Live Reading  â€”  Channel 0", padding=12)
-        live_lf.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        live_lf = ttk.LabelFrame(body, text="Live Reading  -  Channel 0", padding=6)
+        live_lf.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
 
         live_inner = ttk.Frame(live_lf)
         live_inner.pack()
@@ -594,29 +571,32 @@ class BridgeHMI(tk.Tk):
 
         tk.Label(live_inner, text="Calibrated:", fg=TEXT, bg=BG,
                  font=("Segoe UI", 9)).grid(row=0, column=3, sticky="w", padx=(0, 6))
-        self._cal_lbf_live_var = tk.StringVar(value="â€”")
+        self._cal_lbf_live_var = tk.StringVar(value="--")
         tk.Label(live_inner, textvariable=self._cal_lbf_live_var, fg=ORANGE, bg=BG,
                  font=("Consolas", 12, "bold"), width=14).grid(row=0, column=4, sticky="w")
         tk.Label(live_inner, text="lbf", fg=TEXT, bg=BG,
                  font=("Segoe UI", 9)).grid(row=0, column=5, sticky="w", padx=(2, 0))
 
-        # Step 1 â€” Zero
-        zero_lf = ttk.LabelFrame(body, text="Step 1 â€” Zero Point  (no load on sensor)", padding=12)
+        # Step 1 - Zero
+        zero_lf = ttk.LabelFrame(body, text="Step 1 - Zero Point  (no load on sensor)", padding=8)
         zero_lf.grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(0, 8))
 
+        zero_row = ttk.Frame(zero_lf)
+        zero_row.pack(fill="x")
+        self._btn_zero = ttk.Button(zero_row, text="Capture Zero",
+                                     style="Green.TButton",
+                                     command=self._cal_capture_zero)
+        self._btn_zero.pack(side="left")
         self._zero_result_var = tk.StringVar(value="Not captured")
-        tk.Label(zero_lf, textvariable=self._zero_result_var, fg=TEXT, bg=BG,
-                 font=("Consolas", 9), anchor="w").pack(fill="x", pady=(0, 8))
-        ttk.Button(zero_lf, text="âŠ™  Capture Zero",
-                   style="Green.TButton",
-                   command=self._cal_capture_zero).pack(fill="x")
+        tk.Label(zero_row, textvariable=self._zero_result_var, fg=TEXT, bg=BG,
+                 font=("Consolas", 9), anchor="w").pack(side="left", fill="x", expand=True, padx=(10, 0))
 
-        # Step 2 â€” Cal point
-        cal_lf = ttk.LabelFrame(body, text="Step 2 â€” Cal Point  (known load applied)", padding=12)
+        # Step 2 - Cal point
+        cal_lf = ttk.LabelFrame(body, text="Step 2 - Cal Point  (known load applied)", padding=8)
         cal_lf.grid(row=1, column=1, sticky="nsew", padx=(8, 0), pady=(0, 8))
 
         load_row = ttk.Frame(cal_lf)
-        load_row.pack(fill="x", pady=(0, 8))
+        load_row.pack(fill="x", pady=(0, 6))
         tk.Label(load_row, text="Known load:", fg=TEXT, bg=BG,
                  font=("Segoe UI", 9)).pack(side="left")
         self._cal_load_var = tk.DoubleVar(value=10.0)
@@ -624,47 +604,42 @@ class BridgeHMI(tk.Tk):
         tk.Label(load_row, text="lbf", fg=TEXT, bg=BG,
                  font=("Segoe UI", 9)).pack(side="left")
 
+        cal_row = ttk.Frame(cal_lf)
+        cal_row.pack(fill="x")
+        self._btn_cal_pt = ttk.Button(cal_row, text="Capture Cal Point",
+                                       style="Orange.TButton",
+                                       command=self._cal_capture_point)
+        self._btn_cal_pt.pack(side="left")
         self._cal_result_var = tk.StringVar(value="Not captured")
-        tk.Label(cal_lf, textvariable=self._cal_result_var, fg=TEXT, bg=BG,
-                 font=("Consolas", 9), anchor="w").pack(fill="x", pady=(0, 8))
-        ttk.Button(cal_lf, text="âŠ™  Capture Cal Point",
-                   style="Orange.TButton",
-                   command=self._cal_capture_point).pack(fill="x")
+        tk.Label(cal_row, textvariable=self._cal_result_var, fg=TEXT, bg=BG,
+                 font=("Consolas", 9), anchor="w").pack(side="left", fill="x", expand=True, padx=(10, 0))
 
         # Equation + status
-        info_lf = ttk.LabelFrame(body, text="Calibration Status", padding=12)
-        info_lf.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        info_lf = ttk.LabelFrame(body, text="Calibration Status", padding=(8, 4))
+        info_lf.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 4))
 
         self._cal_eq_var = tk.StringVar(value="")
-        tk.Label(info_lf, textvariable=self._cal_eq_var, fg=TEXT, bg=BG,
-                 font=("Consolas", 9), anchor="w").pack(fill="x", pady=(0, 4))
-        self._cal_badge_var = tk.StringVar(value="â¬¤  NOT CALIBRATED")
+        self._cal_eq_lbl = tk.Label(info_lf, textvariable=self._cal_eq_var, fg=TEXT, bg=BG,
+                                     font=("Consolas", 9), anchor="w")
+        self._cal_badge_var = tk.StringVar(value="NOT CALIBRATED")
         self._cal_badge_lbl = tk.Label(info_lf, textvariable=self._cal_badge_var,
                                         fg=RED, bg=BG, font=("Segoe UI", 10, "bold"))
         self._cal_badge_lbl.pack(anchor="w")
 
         # Bottom bar
-        bot = ttk.Frame(parent, padding=(12, 6))
+        bot = ttk.Frame(parent, padding=(12, 4))
         bot.pack(fill="x", side="bottom")
-        ttk.Button(bot, text="ðŸ’¾  Save Calibration",
+        ttk.Button(bot, text="Save Calibration",
                    style="Accent.TButton", command=self._cal_save).pack(side="left", padx=(0, 8))
         ttk.Button(bot, text="Reset",
                    style="Red.TButton", command=self._cal_reset).pack(side="left")
         tk.Label(bot, textvariable=self._cal_status_var,
                  fg=GREEN, bg=BG, font=("Segoe UI", 9)).pack(side="right", padx=8)
 
-        # Store button refs for enable/disable
-        self._btn_zero = self.nametowidget(
-            zero_lf.winfo_children()[-1].winfo_pathname(
-                zero_lf.winfo_children()[-1].winfo_id()))
-        self._btn_cal_pt = self.nametowidget(
-            cal_lf.winfo_children()[-1].winfo_pathname(
-                cal_lf.winfo_children()[-1].winfo_id()))
-
         # Refresh display from any loaded calibration
         self._cal_refresh()
 
-    # â”€â”€ Cal helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Cal helpers ───────────────────────────────────────────────────────────
 
     def _cal_refresh(self):
         cal = self._cal
@@ -681,13 +656,15 @@ class BridgeHMI(tk.Tk):
 
         if cal.is_calibrated:
             self._cal_eq_var.set(
-                f"lbf = (raw âˆ’ {cal.zero_offset:+.5f}) Ã— {cal.scale_factor:.4f}"
+                f"lbf = (raw - {cal.zero_offset:+.5f}) * {cal.scale_factor:.4f}"
                 + (f"   [saved: {cal.timestamp[11:19]}]" if cal.timestamp else ""))
-            self._cal_badge_var.set("â¬¤  CALIBRATED")
+            self._cal_eq_lbl.pack(fill="x", pady=(0, 4), before=self._cal_badge_lbl)
+            self._cal_badge_var.set("CALIBRATED")
             self._cal_badge_lbl.configure(fg=GREEN)
         else:
             self._cal_eq_var.set("")
-            self._cal_badge_var.set("â¬¤  NOT CALIBRATED")
+            self._cal_eq_lbl.pack_forget()
+            self._cal_badge_var.set("NOT CALIBRATED")
             self._cal_badge_lbl.configure(fg=RED)
 
     def _cal_capture_zero(self):
@@ -695,7 +672,7 @@ class BridgeHMI(tk.Tk):
             return
         self._cal_pending = "zero"
         self._cal_set_buttons("disabled")
-        self._cal_prog_lbl.set(f"Sampling zero  ({CAL_SAMPLES} pts) â€¦")
+        self._cal_prog_lbl.set(f"Sampling zero  ({CAL_SAMPLES} pts) ...")
         self._sampler.start()
 
     def _cal_capture_point(self):
@@ -706,7 +683,7 @@ class BridgeHMI(tk.Tk):
             return
         self._cal_pending = "point"
         self._cal_set_buttons("disabled")
-        self._cal_prog_lbl.set(f"Sampling cal point  ({CAL_SAMPLES} pts) â€¦")
+        self._cal_prog_lbl.set(f"Sampling cal point  ({CAL_SAMPLES} pts) ...")
         self._sampler.start()
 
     def _sampler_ready(self) -> bool:
@@ -718,13 +695,11 @@ class BridgeHMI(tk.Tk):
             return False
         if self._engine.latest is None:
             messagebox.showwarning("No live data",
-                                    "No readings yet â€” connect the device via the Record tab first.")
+                                    "No readings yet - connect the device via the Setup tab first.")
             return False
         return True
 
     def _cal_set_buttons(self, state: str):
-        for w in self.winfo_children():
-            pass  # buttons stored directly â€” use widget references
         try:
             self._btn_zero.configure(state=state)
             self._btn_cal_pt.configure(state=state)
@@ -735,7 +710,7 @@ class BridgeHMI(tk.Tk):
         try:
             saved_path = self._cal.save()
             self._cal_status_var.set(
-                f"âœ“ Saved  {Path(saved_path).name}  ({datetime.now().strftime('%H:%M:%S')})")
+                f"Saved  {Path(saved_path).name}  ({datetime.now().strftime('%H:%M:%S')})")
         except Exception as exc:
             messagebox.showerror("Save error", str(exc))
 
@@ -746,7 +721,7 @@ class BridgeHMI(tk.Tk):
         self._cal_refresh()
         self._cal_status_var.set("Calibration reset.")
 
-    # â”€â”€ Cal sampler polling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Cal sampler polling ───────────────────────────────────────────────────
 
     def _poll_cal_sampler(self):
         s   = self._sampler
@@ -756,15 +731,15 @@ class BridgeHMI(tk.Tk):
         # Update live readouts
         if v is None:
             self._cal_raw_var.set("---")
-            self._cal_lbf_live_var.set("â€”")
+            self._cal_lbf_live_var.set("--")
         else:
             self._cal_raw_var.set(f"{v:+.7f}")
-            self._cal_lbf_live_var.set(f"{cal.to_lbf(v):+.4f}" if cal.is_calibrated else "â€”")
+            self._cal_lbf_live_var.set(f"{cal.to_lbf(v):+.4f}" if cal.is_calibrated else "--")
 
         if s.state == CalSampler.DONE:
             avg = s.result
             if avg is None:
-                messagebox.showerror("No data", "Channel 0 returned no readings â€” check connection.")
+                messagebox.showerror("No data", "Channel 0 returned no readings - check connection.")
             else:
                 try:
                     if self._cal_pending == "zero":
@@ -790,6 +765,69 @@ class BridgeHMI(tk.Tk):
         self.after(100, self._poll_cal_sampler)
 
     # ══════════════════════════════════════════════════════════════════════════
+    #  STAB INFO TAB
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _build_stab_info_tab(self, parent):
+        wrap = ttk.Frame(parent, padding=12)
+        wrap.pack(fill="both", expand=True)
+
+        info = ttk.LabelFrame(
+            wrap, text="Strike Info  (snapshotted at trigger)", padding=12)
+        info.pack(fill="x", anchor="n")
+        info.columnconfigure(1, weight=1)
+
+        self._r_event = tk.StringVar()
+        self._r_name = tk.StringVar()
+        self._r_weapon = tk.StringVar()
+        self._r_kingdom = tk.StringVar(value="NA")
+        self._r_rank = tk.StringVar(value="NA")
+        for var in (self._r_event, self._r_name, self._r_weapon, self._r_kingdom):
+            var.trace_add("write", self._sync_strike_meta)
+        self._r_rank.trace_add("write", self._sync_strike_meta)
+
+        row = 0
+        for label, var in [
+            ("Event *", self._r_event),
+            ("Name *", self._r_name),
+            ("Weapon Type *", self._r_weapon),
+        ]:
+            ttk.Label(info, text=label, foreground=TEXT, font=("Segoe UI", 9)).grid(
+                row=row, column=0, sticky="w", padx=(0, 10), pady=6)
+            ttk.Entry(info, textvariable=var, width=30).grid(
+                row=row, column=1, sticky="ew", pady=6)
+            row += 1
+
+        ttk.Label(info, text="Kingdom", foreground=TEXT, font=("Segoe UI", 9)).grid(
+            row=row, column=0, sticky="w", padx=(0, 10), pady=6)
+        ttk.Combobox(info, textvariable=self._r_kingdom, values=KINGDOMS,
+                     state="readonly", width=28).grid(row=row, column=1, sticky="ew", pady=6)
+        row += 1
+
+        ttk.Label(info, text="Rank", foreground=TEXT, font=("Segoe UI", 9)).grid(
+            row=row, column=0, sticky="w", padx=(0, 10), pady=6)
+        rank_row = ttk.Frame(info)
+        rank_row.grid(row=row, column=1, sticky="w", pady=6)
+        for value in ("NA", "None", "Blue", "Yellow", "White"):
+            ttk.Radiobutton(rank_row, text=value, variable=self._r_rank,
+                            value=value).pack(side="left", padx=(0, 10))
+        row += 1
+
+        ttk.Label(info, text="Notes", foreground=TEXT, font=("Segoe UI", 9)).grid(
+            row=row, column=0, sticky="nw", padx=(0, 10), pady=6)
+        self._r_notes = tk.Text(info, bg=BG2, fg=TEXT, font=("Segoe UI", 9),
+                                relief="flat", width=30, height=4, insertbackground=TEXT)
+        self._r_notes.grid(row=row, column=1, sticky="ew", pady=6)
+        self._r_notes.bind("<KeyRelease>", self._sync_strike_meta)
+
+        ttk.Label(
+            wrap,
+            text="* Required fields - filled in here are captured with every "
+                 "strike the moment the trigger fires.",
+            foreground=TEXT, font=("Segoe UI", 8), wraplength=420, justify="left",
+        ).pack(anchor="w", pady=(8, 0))
+
+    # ══════════════════════════════════════════════════════════════════════════
     #  DATA TAB
     # ══════════════════════════════════════════════════════════════════════════
 
@@ -809,11 +847,11 @@ class BridgeHMI(tk.Tk):
         tb = ttk.Frame(parent, padding=(8, 6, 8, 4))
         tb.pack(fill="x")
 
-        ttk.Button(tb, text="⟳ Refresh", style="Accent.TButton",
+        ttk.Button(tb, text="Refresh", style="Accent.TButton",
                    command=self.refresh_file_list).pack(side="right")
-        ttk.Button(tb, text="✏ Edit Metadata",
+        ttk.Button(tb, text="Edit Metadata",
                    command=self._files_edit_metadata).pack(side="right", padx=(0, 6))
-        ttk.Button(tb, text="🗑 Delete",
+        ttk.Button(tb, text="Delete",
                    command=self._files_delete_selected).pack(side="right", padx=(0, 6))
 
         frame = ttk.Frame(parent, padding=(8, 4, 8, 8))
@@ -946,9 +984,9 @@ class BridgeHMI(tk.Tk):
             tf.pack(fill="x")
             NavigationToolbar2Tk(self._canvas, tf)
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════════════════
     #  Recorder control
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════════════════
 
     def _get_strike_metadata(self) -> dict:
         return dict(self._strike_meta)
@@ -957,6 +995,8 @@ class BridgeHMI(tk.Tk):
         self._strike_meta["event"] = self._r_event.get().strip()
         self._strike_meta["name"] = self._r_name.get().strip()
         self._strike_meta["weapon_type"] = self._r_weapon.get().strip()
+        self._strike_meta["kingdom"] = self._r_kingdom.get().strip()
+        self._strike_meta["rank"] = self._r_rank.get().strip()
         self._strike_meta["notes"] = self._r_notes.get("1.0", "end-1c").strip()
 
     def _resolve_pending_feedback(self):
@@ -1002,21 +1042,13 @@ class BridgeHMI(tk.Tk):
         e.reset_hold_seconds      = float(self._r_reset_hold_s.get())
         e.calibration             = self._cal
 
-        raw_thresh = float(self._r_threshold.get())
-        if self._r_trg_unit.get() == "lbf":
-            if not self._cal.is_calibrated:
-                messagebox.showerror("Not calibrated",
-                                      "Calibrate before using a lbf trigger threshold.")
-                return False
-            vv_thresh = raw_thresh / self._cal.scale_factor + self._cal.zero_offset
-        else:
-            vv_thresh = raw_thresh
-        e.trigger_threshold = vv_thresh
+        # Trigger threshold is always entered in lbf.
+        self._sync_trigger_calibration_gate()
         self._sync_strike_meta()
         return True
 
     def _auto_connect(self):
-        """Called once via after() at startup â€” applies config then connects off-thread."""
+        """Called once via after() at startup -- applies config then connects off-thread."""
         if not self._apply_engine_config():
             return
         self._start_connect_thread()
@@ -1037,19 +1069,26 @@ class BridgeHMI(tk.Tk):
         self._log_clear()
         self._log_append(
             "Connecting to PhidgetBridge  CH0(auto-detect)", "info")
-        if self._r_trg_unit.get() == "lbf":
-            raw_thresh = float(self._r_threshold.get())
+        raw_thresh = float(self._r_threshold.get())
+        self._log_append(
+            f"Trigger: {raw_thresh:.4f} lbf  =  {e.trigger_threshold:+.6f} V/V  (rising)",
+            "info")
+        if not self._cal.is_calibrated:
             self._log_append(
-                f"Trigger: {raw_thresh:.4f} lbf  =  {e.trigger_threshold:+.6f} V/V  (rising)",
-                "info")
+                "Not calibrated yet -- connecting disarmed. Calibrate "
+                "Channel 0, then use Arm Trigger.", "trigger")
         self._btn_connect.configure(state="disabled")
-        # Run e.connect() on a daemon thread â€” it spawns the engine thread
+        # Run e.connect() on a daemon thread -- it spawns the engine thread
         # and returns immediately, but we keep the GUI thread free.
         threading.Thread(target=self._do_connect, daemon=True).start()
 
     def _do_connect(self):
-        """Off-thread: call engine.connect() (non-blocking â€” just starts the engine thread)."""
+        """Off-thread: call engine.connect() (non-blocking -- just starts the engine thread)."""
         self._engine.connect()
+        if not self._cal.is_calibrated:
+            # Refuse to arm on raw, uncalibrated sensor units -- require an
+            # explicit Arm Trigger click once Channel 0 has been calibrated.
+            self._engine.disarm()
         # Nothing to schedule back; _poll_recorder will pick up state changes.
 
     def _rec_disconnect(self):
@@ -1076,32 +1115,38 @@ class BridgeHMI(tk.Tk):
         self._prev_state       = RecorderEngine.IDLE
 
     def _rec_arm(self):
+        if not self._cal.is_calibrated:
+            messagebox.showwarning(
+                "Not calibrated",
+                "Calibrate Channel 0 before arming the trigger.")
+            return
         self._engine.arm()
-        self._log_append("Trigger armed â€” watching for event â€¦", "info")
+        self._log_append("Trigger armed -- watching for event ...", "info")
         self._btn_arm.configure(state="disabled")
         self._btn_disarm.configure(state="normal")
 
     def _rec_disarm(self):
         self._engine.disarm()
         self._log_append("Trigger disarmed.", "info")
-        self._btn_arm.configure(state="normal")
+        self._btn_arm.configure(
+            state="normal" if self._cal.is_calibrated else "disabled")
         self._btn_disarm.configure(state="disabled")
 
-    def _on_trg_unit_change(self):
-        unit = self._r_trg_unit.get()
-        self._trg_unit_lbl.set(unit)
-        if unit == "lbf":
-            if not self._cal.is_calibrated:
-                self._trg_cal_warn.set(
-                    "âš  No calibration â€” calibrate first or switch back to V/V.")
-                self._r_trg_unit.set("V/V")
-                self._trg_unit_lbl.set("V/V")
-            else:
-                self._trg_cal_warn.set("")
-                self._r_threshold.set(round(self._cal.cal_load_lbf * 0.1, 4))
-        else:
-            self._trg_cal_warn.set("")
-            self._r_threshold.set(0.01)
+    def _sync_trigger_calibration_gate(self):
+        """Keep the trigger threshold current and refuse to arm/trigger on
+        raw, uncalibrated sensor units. Called on every poll tick so it
+        reacts as soon as Channel 0 is (or stops being) calibrated."""
+        e = self._engine
+        raw_thresh = float(self._r_threshold.get())
+        e.trigger_threshold = raw_thresh / self._cal.scale_factor + self._cal.zero_offset
+
+        calibrated = self._cal.is_calibrated
+        if e.state == RecorderEngine.WAITING and not calibrated:
+            # Should not happen (arming is gated), but guard against a
+            # calibration being cleared while already armed.
+            e.disarm()
+        if e.state == RecorderEngine.DISARMED:
+            self._btn_arm.configure(state="normal" if calibrated else "disabled")
 
     def _log_append(self, msg: str, tag: str = "info"):
         self._log.configure(state="normal")
@@ -1115,40 +1160,23 @@ class BridgeHMI(tk.Tk):
         self._log.delete("1.0", "end")
         self._log.configure(state="disabled")
 
-    def _draw_gauge(self, value: float | None):
-        cv = self._gauge_cv
-        cv.delete("all")
-        W   = cv.winfo_width() or 300
-        H   = cv.winfo_height() or 20
-        mid = W // 2
-        cv.create_rectangle(2, H // 2 - 4, W - 2, H // 2 + 4, fill=BG2, outline="")
-        if value is not None:
-            clamp = max(-1.0, min(1.0, value))
-            if clamp >= 0:
-                x1, x2 = mid, mid + int(clamp * (W // 2 - 4))
-            else:
-                x1, x2 = mid + int(clamp * (W // 2 - 4)), mid
-            if x1 != x2:
-                cv.create_rectangle(x1, H // 2 - 4, x2, H // 2 + 4, fill=TEXT, outline="")
-        cv.create_line(mid, 2, mid, H - 2, fill=TEXT, width=1)
-
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════════════════
     #  Recorder polling
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════════════════
 
     def _poll_recorder(self):
         e     = self._engine
         state = e.state
         v     = e.latest
 
-        # â”€â”€ Gauge update â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Gauge update ──────────────────────────────────────────────────────
         self._gauge_var.set(f"{v:+.6f} V/V" if v is not None else "---")
-        self._draw_gauge(v)
         self._live_lbf_var.set(
             f"{self._cal.to_lbf(v):+.4f}  lbf"
             if (v is not None and self._cal.is_calibrated) else "")
+        self._sync_trigger_calibration_gate()
 
-        # â”€â”€ State transitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── State transitions ─────────────────────────────────────────────────
         if state != self._prev_state:
             self._prev_state = state
 
@@ -1170,15 +1198,17 @@ class BridgeHMI(tk.Tk):
                     self._logged_connected = True
                     self._log_append("Channel 0 attached and armed.", "ok")
                     self._log_append(
-                        f"Watching for rising trigger  (> {e.trigger_threshold:.6f} V/V) â€¦",
+                        f"Watching for rising trigger  (> {self._r_threshold.get():.2f} lbf "
+                        f"= {e.trigger_threshold:+.6f} V/V) ...",
                         "info")
                 else:
-                    self._log_append("â†º Rearmed â€” waiting for next trigger â€¦", "info")
+                    self._log_append("Rearmed -- waiting for next trigger ...", "info")
                 self._logged_trigger = False
 
             elif state == RecorderEngine.DISARMED:
                 self._set_banner("DISARMED", TEXT)
-                self._btn_arm.configure(state="normal")
+                self._btn_arm.configure(
+                    state="normal" if self._cal.is_calibrated else "disabled")
                 self._btn_disarm.configure(state="disabled")
 
             elif state == RecorderEngine.RECORDING:
@@ -1186,22 +1216,22 @@ class BridgeHMI(tk.Tk):
                 if not self._logged_trigger:
                     self._logged_trigger = True
                     self._log_append(
-                        f"⚡ Trigger fired  [{e.capture_index + 1}]  — "
+                        f"Trigger fired  [{e.capture_index + 1}]  -- "
                         f"recording up to {e.max_record_seconds:.1f}s, or until "
-                        f"force drops below threshold …", "trigger")
+                        f"force drops below threshold ...", "trigger")
 
             elif state == RecorderEngine.SAVING:
-                self._set_banner("SAVING â€¦", TEXT)
+                self._set_banner("SAVING ...", TEXT)
 
             elif state == RecorderEngine.SETTLING:
-                self._set_banner("SETTLING â€” WAITING FOR RESET", YELLOW)
+                self._set_banner("SETTLING -- WAITING FOR RESET", YELLOW)
                 self._btn_connect.configure(state="disabled")
                 self._btn_disconnect.configure(state="normal")
                 self._btn_arm.configure(state="disabled")
                 self._btn_disarm.configure(state="normal")
                 self._log_append(
                     f"Force must stay below threshold for "
-                    f"{e.reset_hold_seconds:.1f}s before the trigger re-arms â€¦", "info")
+                    f"{e.reset_hold_seconds:.1f}s before the trigger re-arms ...", "info")
 
             elif state == RecorderEngine.ERROR:
                 self._set_banner("ERROR", RED)
@@ -1219,14 +1249,14 @@ class BridgeHMI(tk.Tk):
                 self._btn_arm.configure(state="disabled")
                 self._btn_disarm.configure(state="disabled")
 
-        # â”€â”€ Progress counter while recording â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Progress counter while recording ──────────────────────────────────
         if state == RecorderEngine.RECORDING:
             cnt = e.capture_count
             if cnt != self._prev_count:
                 self._prev_count = cnt
                 self._prog_lbl.set(f"{cnt} / ~{e.capture_target}")
 
-        # â”€â”€ Detect completed capture (capture_index incremented by engine) â”€â”€â”€â”€
+        # ── Detect completed capture (capture_index incremented by engine) ────
         if e.capture_index != self._prev_capture_idx and e.last_saved_name:
             self._prev_capture_idx = e.capture_index
             n_total = e.capture_count
@@ -1234,8 +1264,8 @@ class BridgeHMI(tk.Tk):
             rate = (strike.data_rate_hz if strike and strike.data_rate_hz else e.data_rate) or 1.0
             duration_s = n_total / rate
             self._log_append(
-                f"✓ Capture #{e.capture_index}  saved  "
-                f"({n_total} samples, ~{duration_s:.2f}s)  → {e.last_saved_name}", "done")
+                f"Capture #{e.capture_index}  saved  "
+                f"({n_total} samples, ~{duration_s:.2f}s)  -> {e.last_saved_name}", "done")
             self._prog_lbl.set(f"0 / ~{e.capture_target}")
             if e.saved_path:
                 self._on_strike_json_written(e.saved_path)
@@ -1251,11 +1281,11 @@ class BridgeHMI(tk.Tk):
         self._state_var.set(text)
         self._state_lbl.configure(fg=colour)
 
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════════════════
     #  Folder / file helpers
-    # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    # ══════════════════════════════════════════════════════════════════════════
 
-    # (folder browsing removed — all files saved to ./data/)
+    # (folder browsing removed -- all files saved to ./data/)
 
     def _on_notebook_tab_changed(self, _event=None):
         idx = getattr(self, "_data_tab_index", None)
@@ -1337,7 +1367,7 @@ class BridgeHMI(tk.Tk):
         if HAS_MPL:
             self._populate_chart(headers, rows)
 
-    # â”€â”€ Stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Stats ─────────────────────────────────────────────────────────────────
 
     def _populate_stats(self, strike: StrikeData | None, headers, rows):
         t = self.stats_text
@@ -1350,18 +1380,20 @@ class BridgeHMI(tk.Tk):
 
         if strike:
             t.insert("end", "  STRIKE METADATA\n", "header")
-            t.insert("end", "  " + "─" * 44 + "\n", "label")
+            t.insert("end", "  " + "-" * 44 + "\n", "label")
             feedback = (
                 f"{strike.user_calibration_feedback:.1f}"
                 if strike.user_calibration_feedback is not None
-                else "—"
+                else "--"
             )
             for label, val in [
                 ("Date / Time",    strike.datetime),
-                ("Event",          strike.event or "—"),
-                ("Name",           strike.name or "—"),
-                ("Weapon Type",    strike.weapon_type or "—"),
-                ("Notes",          strike.notes or "—"),
+                ("Event",          strike.event or "--"),
+                ("Name",           strike.name or "--"),
+                ("Weapon Type",    strike.weapon_type or "--"),
+                ("Kingdom",        strike.kingdom or "--"),
+                ("Rank",           strike.rank or "--"),
+                ("Notes",          strike.notes or "--"),
                 ("Peak Force",     f"{strike.peak_force_lbf:.4f} lbf"),
                 ("Impulse",        f"{strike.total_energy_lbf_s:.6f} lbf·s"),
                 ("Cal Feedback",   feedback),
@@ -1371,7 +1403,7 @@ class BridgeHMI(tk.Tk):
 
         t.configure(state="disabled")
 
-    # â”€â”€ Chart â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Chart ─────────────────────────────────────────────────────────────────
 
     def _populate_chart(self, headers, rows):
         if not HAS_MPL:
@@ -1430,7 +1462,7 @@ class BridgeHMI(tk.Tk):
             label.set_color(TEXT)
         self._canvas.draw()
 
-    # â”€â”€ Cleanup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Cleanup ───────────────────────────────────────────────────────────────
 
     def destroy(self):
         self._resolve_pending_feedback()
@@ -1438,7 +1470,7 @@ class BridgeHMI(tk.Tk):
         super().destroy()
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═════════════════════════════════════════════════════════════════════════════
 #  Entry point
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ═════════════════════════════════════════════════════════════════════════════
 

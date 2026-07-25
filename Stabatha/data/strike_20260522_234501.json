@@ -12,7 +12,9 @@
     "data_rate_hz": 1200.0,
     "pre_trigger_count": 10,
     "post_trigger_count": 100,
-    "sample_count": 101
+    "sample_count": 101,
+    "kingdom": "\u00c6thelmearc",
+    "rank": "Blue"
   },
   "samples": [
     {
