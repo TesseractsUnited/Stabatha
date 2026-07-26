@@ -508,6 +508,7 @@ class BridgeHMI(tk.Tk):
             ("  Calibrate  ",   self._build_cal_tab),
             ("  Stab Info  ",   self._build_stab_info_tab),
             ("  Data  ",        self._build_data_tab),
+            ("  Notes  ",       self._build_notes_tab),
         ]:
             tab = ttk.Frame(self.notebook)
             self.notebook.add(tab, text=text)
@@ -1127,6 +1128,36 @@ class BridgeHMI(tk.Tk):
         tf = ttk.Frame(parent)
         tf.pack(fill="x")
         NavigationToolbar2Tk(self._canvas, tf)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  NOTES TAB
+    # ══════════════════════════════════════════════════════════════════════════
+
+    NOTES_SCALE = (
+        "0 - No contact.",
+        "1 - Light contact, not a valid hit.",
+        "2 - Minimal valid contact.",
+        "3 - Maximum valid contact.",
+        "4 - Heavy hit, apologize.",
+        "5 - Far too heavy, possible injury, opponent leaves field.",
+    )
+
+    def _build_notes_tab(self, parent):
+        wrap = ttk.Frame(parent, padding=16)
+        wrap.pack(fill="both", expand=True)
+
+        ttk.Label(
+            wrap, text="Calibration Feedback Scale", foreground=TEXT,
+            font=("Segoe UI", 12, "bold"),
+        ).pack(anchor="w", pady=(0, 10))
+
+        for line in self.NOTES_SCALE:
+            row = ttk.Frame(wrap)
+            row.pack(fill="x", anchor="w", pady=4)
+            ttk.Label(row, text="\u2022", foreground=TEXT,
+                      font=("Segoe UI", 11)).pack(side="left", padx=(0, 8), anchor="n")
+            ttk.Label(row, text=line, foreground=TEXT, font=("Segoe UI", 11),
+                      wraplength=560, justify="left").pack(side="left", anchor="w")
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Recorder control
