@@ -1082,6 +1082,11 @@ class BridgeHMI(tk.Tk):
         self._engine.arm()
         self._log_append(
             "Feedback recorded -- rearming (confirming force has settled) ...", "info")
+        # This feedback cycle is now fully resolved (file written, engine
+        # rearmed) -- clear it so the *next* capture's _open_strike_feedback
+        # -> _resolve_pending_feedback() doesn't find this stale entry and
+        # incorrectly re-select/re-chart this (now old) strike.
+        self._pending_feedback = None
 
     def _apply_engine_config(self) -> bool:
         """Push current UI settings into the engine. Must be called on the main thread."""
