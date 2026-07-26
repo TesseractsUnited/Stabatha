@@ -31,6 +31,11 @@ POST_TRIGGER_MAX_SECONDS = 3.0
 # trigger will not actually start watching for the next strike until the
 # force has stayed below the trigger threshold continuously for this long.
 TRIGGER_RESET_HOLD_SECONDS = 3.0
+# Rolling window (while waiting/settling, before a trigger fires) that is
+# averaged to synthesize a "zero point" baseline sample prepended to each
+# capture -- the raw signal can rise so fast that the first real sample
+# already sits well above the trigger threshold.
+BASELINE_WINDOW_SECONDS = 1.0
 
 STRIKE_META_FIELDS = [
     "datetime",

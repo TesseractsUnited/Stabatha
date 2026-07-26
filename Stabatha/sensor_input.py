@@ -2,12 +2,14 @@
 
 import threading
 import time
-from datetime import datetime
+from collections import deque
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
 from calibration import CalibrationStore
 from constants import (
+    BASELINE_WINDOW_SECONDS,
     CAL_SAMPLES,
     PHIDGET_BRIDGE_MAX_DATA_RATE_HZ,
     PHIDGET_BRIDGE_MIN_DATA_RATE_HZ,
@@ -15,7 +17,7 @@ from constants import (
     TRIGGER_RESET_HOLD_SECONDS,
 )
 from file_access import save_strike
-from strike_data import StrikeData
+from strike_data import StrikeData, StrikeSample
 
 try:
     from Phidget22.Devices.VoltageRatioInput import VoltageRatioInput
@@ -63,6 +65,17 @@ class RecorderEngine:
         self._record_start_mono = 0.0
         self._thread = None
 
+        # Rolling (time, raw V/V) history of recent non-recording readings,
+        # used to synthesize a settled "zero point" baseline sample right
+        # before each trigger. Only a cheap snapshot copy of this buffer is
+        # taken at trigger time (on the time-critical Phidget callback
+        # thread); the actual averaging happens later in _save_strike(),
+        # off that thread, once recording has finished.
+        self.baseline_window_seconds = BASELINE_WINDOW_SECONDS
+        self._baseline_buffer: deque[tuple[float, float]] = deque()
+        self._baseline_snapshot: list[tuple[float, float]] = []
+        self._baseline_trigger_dt: datetime | None = None
+
         self.serial_number = None
         self.data_rate = 1200.0
         self._applied_data_rate = self.data_rate
@@ -92,6 +105,7 @@ class RecorderEngine:
         self._trigger_evt.clear()
         self._record_done_evt.clear()
         self._recording_active = False
+        self._baseline_buffer.clear()
         self.error_msg = ""
         self.latest = None
         self.capture_index = 0
@@ -179,7 +193,15 @@ class RecorderEngine:
     def _begin_strike(self, trigger_value: float):
         """Called from the Phidget callback the instant the trigger
         threshold is crossed. Appends the triggering sample immediately
-        so it is not lost while the recorder thread wakes up."""
+        so it is not lost while the recorder thread wakes up.
+
+        Only a cheap snapshot copy (a few microseconds, no arithmetic) of
+        the pre-trigger baseline buffer is taken here, on this
+        time-critical callback thread. The buffer is guaranteed to stay
+        untouched for the whole recording (the buffer-feeding branch in
+        _on_value_change only runs while NOT recording), so the actual
+        averaging is deferred to _save_strike() once recording is done --
+        see _insert_baseline_sample()."""
         strike = StrikeData()
         strike.datetime = datetime.now().isoformat(timespec="seconds")
         strike.data_rate_hz = self._applied_data_rate
@@ -190,10 +212,36 @@ class RecorderEngine:
         if self.metadata_provider:
             strike.apply_metadata(**self.metadata_provider())
 
-        ts = datetime.now().isoformat(timespec="milliseconds")
+        trigger_dt = datetime.now()
+        self._baseline_snapshot = list(self._baseline_buffer)
+        self._baseline_trigger_dt = trigger_dt
+
+        ts = trigger_dt.isoformat(timespec="milliseconds")
         strike.append_sample(ts, trigger_value, pre_trigger=False, calibration=self.calibration)
 
         self.current_strike = strike
+
+    def _insert_baseline_sample(self, strike: StrikeData):
+        """Runs off the time-critical callback thread (called from
+        _save_strike(), after recording has finished). Averages the
+        pre-trigger baseline snapshot taken by _begin_strike() and
+        prepends it as a settled "zero point" sample, timestamped one
+        sample period before the trigger -- see _begin_strike() docstring
+        for why the heavier averaging arithmetic is done here instead."""
+        snapshot = self._baseline_snapshot
+        trigger_dt = self._baseline_trigger_dt
+        if not snapshot or trigger_dt is None:
+            return
+        baseline = sum(v for _, v in snapshot) / len(snapshot)
+        period = 1.0 / max(self._applied_data_rate, 1.0)
+        baseline_ts = (trigger_dt - timedelta(seconds=period)).isoformat(timespec="milliseconds")
+        lbf = None
+        if self.calibration and self.calibration.is_calibrated:
+            lbf = self.calibration.to_lbf(baseline)
+        strike.samples.insert(0, StrikeSample(
+            timestamp=baseline_ts, pre_trigger=True, ch0_v_per_v=baseline, ch0_lbf=lbf,
+        ))
+        strike.pre_trigger_count = 1
 
     def _wait_for_trigger(self):
         """Block until the Phidget callback fires the trigger event.
@@ -281,19 +329,31 @@ class RecorderEngine:
             strike.append_sample(ts, value, pre_trigger=False, calibration=self.calibration)
             elapsed = time.monotonic() - self._record_start_mono
             if elapsed >= self.max_record_seconds or value < self.trigger_threshold:
-                strike.post_trigger_count = len(strike.samples)
+                strike.post_trigger_count = len(strike.samples) - strike.pre_trigger_count
                 self._recording_active = False
                 self._record_done_evt.set()
-        elif self.state == self.WAITING and not self._trigger_evt.is_set():
-            if value > self.trigger_threshold:
-                self._begin_strike(value)
-                self._record_start_mono = time.monotonic()
-                # Set before the trigger event so the very next callback
-                # (which may arrive within microseconds) is already
-                # recognised as part of the recording, not dropped while
-                # the recorder thread wakes up and updates self.state.
-                self._recording_active = True
-                self._trigger_evt.set()
+            return
+
+        if self.state == self.WAITING and not self._trigger_evt.is_set() and value > self.trigger_threshold:
+            self._begin_strike(value)
+            self._record_start_mono = time.monotonic()
+            # Set before the trigger event so the very next callback
+            # (which may arrive within microseconds) is already
+            # recognised as part of the recording, not dropped while
+            # the recorder thread wakes up and updates self.state.
+            self._recording_active = True
+            self._trigger_evt.set()
+            return
+
+        # Not recording and not triggering on this sample -- feed the
+        # rolling baseline buffer so a settled "zero point" average is
+        # ready the instant the next trigger fires.
+        now = time.monotonic()
+        buf = self._baseline_buffer
+        buf.append((now, value))
+        cutoff = now - self.baseline_window_seconds
+        while buf and buf[0][0] < cutoff:
+            buf.popleft()
 
     def _record(self):
         """Post-trigger samples are appended directly by _on_value_change()
@@ -310,6 +370,7 @@ class RecorderEngine:
         strike = self.current_strike
         if not strike or not strike.samples:
             return
+        self._insert_baseline_sample(strike)
         strike.finalize()
         path = save_strike(strike, self.save_folder)
         self.saved_path = path

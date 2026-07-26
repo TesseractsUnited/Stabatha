@@ -69,7 +69,7 @@ class StrikeFeedbackDialog(tk.Toplevel):
             row, from_=0, to=5, orient="horizontal",
             variable=self._value_var, resolution=0.1,
             bg=BG, fg=TEXT, troughcolor=BG2, highlightthickness=0,
-            length=420, width=30, sliderlength=45, sliderrelief="raised",
+            length=840, width=60, sliderlength=90, sliderrelief="raised",
             font=("Segoe UI", 10), command=self._on_scale_change,
         )
         scale.pack(side="left", fill="x", expand=True)
@@ -78,11 +78,17 @@ class StrikeFeedbackDialog(tk.Toplevel):
         btn_row.pack(fill="x")
         ttk.Button(btn_row, text="Done", command=self._handle_close).pack(side="right")
 
+        # Position low and toward the left edge of the physical screen
+        # (rather than centered on the parent window) so it's out of the
+        # way of the rest of the HMI and any on-screen keyboard.
         self.update_idletasks()
-        px = parent.winfo_rootx() + parent.winfo_width() // 2
-        py = parent.winfo_rooty() + parent.winfo_height() // 2
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
         w, h = self.winfo_width(), self.winfo_height()
-        self.geometry(f"+{px - w // 2}+{py - h // 2}")
+        margin_x, margin_y = 30, 30
+        x = margin_x
+        y = max(0, sh - h - margin_y)
+        self.geometry(f"+{x}+{y}")
 
     def _on_scale_change(self, _val):
         # Only note that the slider moved here -- writing to disk and

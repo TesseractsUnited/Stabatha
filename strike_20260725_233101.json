@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "datetime": "2026-07-25T23:31:01",
+    "event": "",
+    "name": "",
+    "weapon_type": "",
+    "kingdom": "",
+    "rank": "",
+    "notes": "",
+    "user_calibration_feedback": null,
+    "peak_force_lbf": 0.0,
+    "total_energy_lbf_s": 0.0,
+    "data_rate_hz": 1000.0,
+    "pre_trigger_count": 1,
+    "post_trigger_count": 3,
+    "sample_count": 4
+  },
+  "samples": [
+    {
+      "timestamp": "2026-07-25T23:31:01.445",
+      "pre_trigger": true,
+      "ch0_v_per_v": 0.0010998000000000002,
+      "ch0_lbf": null
+    },
+    {
+      "timestamp": "2026-07-25T23:31:01.446",
+      "pre_trigger": false,
+      "ch0_v_per_v": 0.05,
+      "ch0_lbf": null
+    },
+    {
+      "timestamp": "2026-07-25T23:31:01.446",
+      "pre_trigger": false,
+      "ch0_v_per_v": 0.04,
+      "ch0_lbf": null
+    },
+    {
+      "timestamp": "2026-07-25T23:31:01.446",
+      "pre_trigger": false,
+      "ch0_v_per_v": 0.0005,
+      "ch0_lbf": null
+    }
+  ]
+}
