@@ -69,7 +69,8 @@ class StrikeFeedbackDialog(tk.Toplevel):
             row, from_=0, to=5, orient="horizontal",
             variable=self._value_var, resolution=0.1,
             bg=BG, fg=TEXT, troughcolor=BG2, highlightthickness=0,
-            length=220, command=self._on_scale_change,
+            length=420, width=30, sliderlength=45, sliderrelief="raised",
+            font=("Segoe UI", 10), command=self._on_scale_change,
         )
         scale.pack(side="left", fill="x", expand=True)
 

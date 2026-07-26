@@ -58,6 +58,9 @@ class RecorderEngine:
         self._disarm_evt = threading.Event()
         self._attach_evt = threading.Event()
         self._trigger_evt = threading.Event()
+        self._record_done_evt = threading.Event()
+        self._recording_active = False
+        self._record_start_mono = 0.0
         self._thread = None
 
         self.serial_number = None
@@ -87,6 +90,8 @@ class RecorderEngine:
         self._disarm_evt.clear()
         self._attach_evt.clear()
         self._trigger_evt.clear()
+        self._record_done_evt.clear()
+        self._recording_active = False
         self.error_msg = ""
         self.latest = None
         self.capture_index = 0
@@ -112,9 +117,6 @@ class RecorderEngine:
         if self.current_strike is None:
             return 0
         return len(self.current_strike.samples)
-
-    def _sample_period_s(self) -> float:
-        return 1.0 / max(self._applied_data_rate, PHIDGET_BRIDGE_MIN_DATA_RATE_HZ)
 
     def _run(self):
         try:
@@ -166,6 +168,8 @@ class RecorderEngine:
 
     def _reset_for_next_capture(self):
         self._trigger_evt.clear()
+        self._record_done_evt.clear()
+        self._recording_active = False
         self.current_strike = None
         self.saved_path = ""
         self.capture_target = max(
@@ -262,32 +266,45 @@ class RecorderEngine:
         self.error_msg = f"CH0 error [{code}]: {desc}"
 
     def _on_value_change(self, ch, value):
+        """Runs on the Phidget22 library's own callback thread, once per
+        real hardware sample. Recording is handled entirely here (not by
+        a separately-timed polling loop on the recorder thread) so every
+        saved sample is the actual hardware reading at the actual moment
+        it arrived -- no polling jitter/drift, and no handoff delay
+        between trigger and the start of recording."""
         self.latest = value
-        if self.state == self.WAITING and not self._trigger_evt.is_set():
+        if self._recording_active:
+            strike = self.current_strike
+            if strike is None:
+                return
+            ts = datetime.now().isoformat(timespec="milliseconds")
+            strike.append_sample(ts, value, pre_trigger=False, calibration=self.calibration)
+            elapsed = time.monotonic() - self._record_start_mono
+            if elapsed >= self.max_record_seconds or value < self.trigger_threshold:
+                strike.post_trigger_count = len(strike.samples)
+                self._recording_active = False
+                self._record_done_evt.set()
+        elif self.state == self.WAITING and not self._trigger_evt.is_set():
             if value > self.trigger_threshold:
                 self._begin_strike(value)
+                self._record_start_mono = time.monotonic()
+                # Set before the trigger event so the very next callback
+                # (which may arrive within microseconds) is already
+                # recognised as part of the recording, not dropped while
+                # the recorder thread wakes up and updates self.state.
+                self._recording_active = True
                 self._trigger_evt.set()
 
     def _record(self):
-        """Record post-trigger samples until the force drops below
-        trigger_threshold, or max_record_seconds have elapsed. The very
-        first (triggering) sample was already appended by _begin_strike()
-        at the instant the threshold was crossed."""
-        period = self._sample_period_s()
+        """Post-trigger samples are appended directly by _on_value_change()
+        as they arrive. This just waits for that callback to signal that
+        recording finished (force dropped below threshold, or
+        max_record_seconds elapsed)."""
         strike = self.current_strike
         if strike is None:
             return
-        start = time.monotonic()
-        while not self._stop_evt.is_set():
-            if (time.monotonic() - start) >= self.max_record_seconds:
-                break
-            time.sleep(period)
-            ts = datetime.now().isoformat(timespec="milliseconds")
-            val = self.latest
-            strike.append_sample(ts, val, pre_trigger=False, calibration=self.calibration)
-            if val is not None and val < self.trigger_threshold:
-                break
-        strike.post_trigger_count = len(strike.samples)
+        while not self._record_done_evt.is_set() and not self._stop_evt.is_set():
+            self._record_done_evt.wait(timeout=0.05)
 
     def _save_strike(self):
         strike = self.current_strike
