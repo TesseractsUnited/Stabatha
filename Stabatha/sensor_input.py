@@ -121,11 +121,12 @@ class RecorderEngine:
             self.state = self.CONNECTING
             self._open_channel()
             while not self._stop_evt.is_set():
-                self._reset_for_next_capture()
-                self.state = self.WAITING
-                self._wait_for_trigger()
-                if self._stop_evt.is_set():
-                    break
+                # Check disarm *before* resetting capture state -- otherwise
+                # a capture that just finished (which disarms itself below)
+                # would have saved_path/last_saved_name wiped by
+                # _reset_for_next_capture() before the HMI's poll loop gets
+                # a chance to notice the completed capture and show the
+                # feedback dialog.
                 if self._disarm_evt.is_set():
                     self.state = self.DISARMED
                     self._wait_while_disarmed()
@@ -136,6 +137,13 @@ class RecorderEngine:
                     # threshold before watching for the next strike.
                     self.state = self.SETTLING
                     self._wait_for_reset()
+                    continue
+                self._reset_for_next_capture()
+                self.state = self.WAITING
+                self._wait_for_trigger()
+                if self._stop_evt.is_set():
+                    break
+                if self._disarm_evt.is_set():
                     continue
                 self.state = self.RECORDING
                 self._record()

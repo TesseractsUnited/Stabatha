@@ -7,8 +7,8 @@ from datetime import datetime
 from pathlib import Path
 
 from constants import (
-    ACCENT, BG, BG2, CAL_SAMPLES, PHIDGET_BRIDGE_MAX_DATA_RATE_HZ, TEXT, GREEN, ORANGE, RED,
-    YELLOW, ensure_data_dir,
+    ACCENT, BG, BG2, CAL_FILE, CAL_SAMPLES, PHIDGET_BRIDGE_MAX_DATA_RATE_HZ, TEXT, GREEN,
+    ORANGE, RED, YELLOW, ensure_data_dir,
 )
 from calibration import CalibrationStore
 from file_access import (
@@ -268,7 +268,7 @@ class BridgeHMI(tk.Tk):
         self._engine.save_folder = str(ensure_data_dir())
         self._engine.calibration = self._cal
         self._engine.metadata_provider = self._get_strike_metadata
-        self._cal.load()   # loads from ./data/calibration.json
+        self._cal_loaded_at_startup = self._cal.load()   # loads from ./data/calibration.json
 
         # Cal sampler pending action: "zero" | "point" | None
         self._cal_pending: str | None = None
@@ -284,6 +284,13 @@ class BridgeHMI(tk.Tk):
         self._build_ui()
         bind_osk_tree(self)
         self.refresh_file_list()
+
+        if self._cal_loaded_at_startup and self._cal.is_calibrated:
+            self._log_append(
+                f"Loaded saved calibration from {CAL_FILE}  "
+                f"(scale={self._cal.scale_factor:.4f}, zero={self._cal.zero_offset:+.5f}"
+                f"{', ' + self._cal.timestamp if self._cal.timestamp else ''}).", "ok")
+
         self._poll_recorder()
         self._poll_cal_sampler()
 
@@ -814,6 +821,8 @@ class BridgeHMI(tk.Tk):
         for var in (self._r_event, self._r_name, self._r_weapon, self._r_kingdom):
             var.trace_add("write", self._sync_strike_meta)
         self._r_rank.trace_add("write", self._sync_strike_meta)
+        for var in (self._r_event, self._r_name, self._r_weapon):
+            var.trace_add("write", lambda *_a, v=var: self._auto_capitalize_var(v))
 
         row = 0
         for label, var in [
@@ -848,6 +857,7 @@ class BridgeHMI(tk.Tk):
                                 relief="flat", width=30, height=4, insertbackground=TEXT)
         self._r_notes.grid(row=row, column=1, sticky="ew", pady=6)
         self._r_notes.bind("<KeyRelease>", self._sync_strike_meta)
+        self._r_notes.bind("<KeyRelease>", self._auto_capitalize_notes, add="+")
 
         ttk.Label(
             wrap,
@@ -870,7 +880,7 @@ class BridgeHMI(tk.Tk):
         paned.add(detail_frame, weight=2)
 
         self._build_files_list(files_frame)
-        self._build_stats_panel(detail_frame)
+        self._build_chart_panel(detail_frame)
 
     def _build_files_list(self, parent):
         tb = ttk.Frame(parent, padding=(8, 6, 8, 4))
@@ -887,19 +897,19 @@ class BridgeHMI(tk.Tk):
         frame.pack(fill="both", expand=True)
 
         cols = ("id", "event", "name", "weapon_type",
-                "peak_force_lbf", "impulse", "notes", "feedback")
+                "peak_force_lbf", "impulse", "feedback", "notes")
         self.file_tree = ttk.Treeview(frame, columns=cols, show="headings",
                                        style="Files.Treeview", selectmode="browse")
 
         for col, label, w, anc in [
-            ("id",              "ID",             155, "center"),
-            ("event",           "Event",          110, "center"),
-            ("name",            "Name",           110, "center"),
-            ("weapon_type",     "Weapon Type",     80, "center"),
-            ("peak_force_lbf",  "Peak (lbf)",      60, "center"),
-            ("impulse",         "Impulse",         60, "center"),
+            ("id",              "ID",             110, "e"),
+            ("event",           "Event",          110, "w"),
+            ("name",            "Name",           110, "w"),
+            ("weapon_type",     "Weapon Type",     80, "w"),
+            ("peak_force_lbf",  "Peak (lbf)",      60, "w"),
+            ("impulse",         "Impulse",         60, "w"),
+            ("feedback",        "Calibration Feedback",    60, "w"),
             ("notes",           "Notes",          180, "w"),
-            ("feedback",        "Calibration Feedback",    60, "center"),
         ]:
             self.file_tree.heading(col, text=label,
                                    command=lambda c=col: self._files_sort(c))
@@ -967,51 +977,25 @@ class BridgeHMI(tk.Tk):
             self._selected_strike = None
             self._data_headers = []
             self._data_rows    = []
-            self._populate_stats(None, [], [])
             if HAS_MPL:
                 self._populate_chart([], [])
         self.refresh_file_list()
 
-    def _build_stats_panel(self, parent):
-        if HAS_MPL:
-            paned = ttk.PanedWindow(parent, orient="vertical")
-            paned.pack(fill="both", expand=True, padx=4, pady=4)
-            stats_frame = ttk.Frame(paned)
-            chart_frame = ttk.Frame(paned)
-            paned.add(stats_frame, weight=1)
-            paned.add(chart_frame, weight=2)
-        else:
-            stats_frame = parent
-            chart_frame = None
+    def _build_chart_panel(self, parent):
+        if not HAS_MPL:
+            ttk.Label(
+                parent, text="matplotlib not installed -- chart unavailable.",
+                foreground=TEXT, font=("Segoe UI", 9),
+            ).pack(expand=True)
+            return
 
-        self.stats_text = tk.Text(stats_frame, bg=BG2, fg=TEXT, font=("Consolas", 10),
-                                   relief="flat", wrap="none", state="disabled",
-                                   height=7, insertbackground=TEXT,
-                                   selectbackground=ACCENT)
-        #sb = ttk.Scrollbar(stats_frame, orient="vertical", command=self.stats_text.yview)
-        #self.stats_text.configure(yscrollcommand=sb.set)
-        self.stats_text.pack(side="left", fill="both", expand=True, padx=(0, 0), pady=0)
-        #sb.pack(side="right", fill="y")
-        for tag, colour, bold in [
-            ("header", TEXT, True),
-            ("label",  TEXT, False),
-            ("value",  GREEN,    False),
-            ("raw",    TEXT,   False),
-            ("lbf",    ORANGE,   False),
-        ]:
-            kw: dict = {"foreground": colour}
-            if bold:
-                kw["font"] = ("Consolas", 10, "bold")
-            self.stats_text.tag_configure(tag, **kw)
-
-        if chart_frame is not None:
-            self._fig = Figure(figsize=(6, 4), dpi=100, facecolor=BG)
-            self._ax = self._fig.add_subplot(111, facecolor=BG2)
-            self._canvas = FigureCanvasTkAgg(self._fig, master=chart_frame)
-            self._canvas.get_tk_widget().pack(fill="both", expand=True)
-            tf = ttk.Frame(chart_frame)
-            tf.pack(fill="x")
-            NavigationToolbar2Tk(self._canvas, tf)
+        self._fig = Figure(figsize=(6, 4), dpi=100, facecolor=BG)
+        self._ax = self._fig.add_subplot(111, facecolor=BG2)
+        self._canvas = FigureCanvasTkAgg(self._fig, master=parent)
+        self._canvas.get_tk_widget().pack(fill="both", expand=True)
+        tf = ttk.Frame(parent)
+        tf.pack(fill="x")
+        NavigationToolbar2Tk(self._canvas, tf)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Recorder control
@@ -1027,6 +1011,24 @@ class BridgeHMI(tk.Tk):
         self._strike_meta["kingdom"] = self._r_kingdom.get().strip()
         self._strike_meta["rank"] = self._r_rank.get().strip()
         self._strike_meta["notes"] = self._r_notes.get("1.0", "end-1c").strip()
+
+    @staticmethod
+    def _auto_capitalize_var(var: tk.StringVar):
+        """Capitalize the very first letter typed into an otherwise-empty
+        Entry field (mirrors the auto-capitalize behaviour of a phone
+        keyboard)."""
+        val = var.get()
+        if len(val) == 1 and val.isalpha() and val.islower():
+            var.set(val.upper())
+
+    def _auto_capitalize_notes(self, _event=None):
+        """Same auto-capitalize behaviour as _auto_capitalize_var, for the
+        Notes Text widget (which has no StringVar to trace)."""
+        content = self._r_notes.get("1.0", "end-1c")
+        if len(content) == 1 and content.isalpha() and content.islower():
+            self._r_notes.delete("1.0", "end")
+            self._r_notes.insert("1.0", content.upper())
+            self._sync_strike_meta()
 
     def _resolve_pending_feedback(self):
         pending = self._pending_feedback
@@ -1363,6 +1365,17 @@ class BridgeHMI(tk.Tk):
             self.selected_path = path
         self.refresh_file_list(reselect_path=reselect)
 
+    @staticmethod
+    def _short_id(full_id: str) -> str:
+        """Shorten an "id" (e.g. "2026-07-25 21:18:00") for the narrow ID
+        column. ttk.Treeview does not reliably clip overflowing text from
+        the left even with anchor="e", so we pre-truncate here and always
+        keep the trailing (most useful/most recent) part visible -- drop
+        the leading year rather than letting the widget hide the time."""
+        if len(full_id) > 14 and full_id[4:5] == "-":
+            return full_id[5:]  # "2026-07-25 21:18:00" -> "07-25 21:18:00"
+        return full_id
+
     def refresh_file_list(self, *, reselect_path: str | None = None):
         folder = ensure_data_dir()
         self.strike_files = find_strike_files(str(folder))
@@ -1387,14 +1400,14 @@ class BridgeHMI(tk.Tk):
         for meta in self.strike_files:
             item = self.file_tree.insert("", "end",
                 values=(
-                    meta["id"],
+                    self._short_id(meta["id"]),
                     meta["event"],
                     meta["name"],
                     meta["weapon_type"],
                     meta["peak_force_lbf"],
                     meta["impulse"],
-                    meta["notes"],
                     meta["feedback"],
+                    meta["notes"],
                 ),
                 tags=(meta["path"],))
             if keep_path and meta["path"] == keep_path:
@@ -1420,45 +1433,8 @@ class BridgeHMI(tk.Tk):
         self._selected_strike = strike
         self._data_headers = headers
         self._data_rows    = rows
-        self._populate_stats(strike, headers, rows)
         if HAS_MPL:
             self._populate_chart(headers, rows)
-
-    # ── Stats ─────────────────────────────────────────────────────────────────
-
-    def _populate_stats(self, strike: StrikeData | None, headers, rows):
-        t = self.stats_text
-        t.configure(state="normal")
-        t.delete("1.0", "end")
-        if not rows:
-            t.insert("end", "No data.\n")
-            t.configure(state="disabled")
-            return
-
-        if strike:
-            t.insert("end", "  STRIKE METADATA\n", "header")
-            t.insert("end", "  " + "-" * 44 + "\n", "label")
-            feedback = (
-                f"{strike.user_calibration_feedback:.1f}"
-                if strike.user_calibration_feedback is not None
-                else "--"
-            )
-            for label, val in [
-                ("Date / Time",    strike.datetime),
-                ("Event",          strike.event or "--"),
-                ("Name",           strike.name or "--"),
-                ("Weapon Type",    strike.weapon_type or "--"),
-                ("Kingdom",        strike.kingdom or "--"),
-                ("Rank",           strike.rank or "--"),
-                ("Notes",          strike.notes or "--"),
-                ("Peak Force",     f"{strike.peak_force_lbf:.4f} lbf"),
-                ("Impulse",        f"{strike.total_energy_lbf_s:.6f} lbf·s"),
-                ("Cal Feedback",   feedback),
-            ]:
-                t.insert("end", f"  {label:<14}", "label")
-                t.insert("end", f"  {val}\n", "value")
-
-        t.configure(state="disabled")
 
     # ── Chart ─────────────────────────────────────────────────────────────────
 

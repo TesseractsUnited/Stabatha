@@ -96,8 +96,8 @@ def find_strike_files(folder: str) -> list[dict]:
                 "event": strike.event,
                 "name": strike.name,
                 "weapon_type": strike.weapon_type,
-                "peak_force_lbf": f"{strike.peak_force_lbf:.3f}",
-                "impulse": f"{impulse:.4f}" if impulse else "",
+                "peak_force_lbf": f"{strike.peak_force_lbf:.1f}",
+                "impulse": f"{impulse:.3f}" if impulse else "",
                 "notes": strike.notes or "",
                 "feedback": format_calibration_feedback(feedback),
             }
