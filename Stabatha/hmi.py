@@ -148,6 +148,7 @@ class StrikeFeedbackDialog(tk.Toplevel):
     def __init__(self, parent, strike_path: str, on_slider_moved=None, on_written=None,
                  on_close=None):
         super().__init__(parent)
+        self.withdraw()  # stay hidden until positioned, to avoid a visible jump
         self.title("Strike Feedback")
         self.configure(bg=BG)
         self.resizable(False, False)
@@ -171,7 +172,7 @@ class StrikeFeedbackDialog(tk.Toplevel):
             row, from_=0, to=5, orient="horizontal",
             variable=self._value_var, resolution=0.1,
             bg=BG, fg=TEXT, troughcolor=BG2, highlightthickness=0,
-            length=840, width=60, sliderlength=90, sliderrelief="raised",
+            length=720, width=51, sliderlength=77, sliderrelief="raised",
             font=("Segoe UI", 10), command=self._on_scale_change,
         )
         scale.pack(side="left", fill="x", expand=True)
@@ -183,10 +184,21 @@ class StrikeFeedbackDialog(tk.Toplevel):
         # Position low and toward the left edge of the physical screen
         # (rather than centered on the parent window) so it's out of the
         # way of the rest of the HMI and any on-screen keyboard.
+        self._position_bottom_left()
+        self.deiconify()
+        # Many window managers (common on a Pi) re-center a transient()
+        # dialog over its parent the moment it's actually mapped, which
+        # happens *after* the geometry() call above and silently
+        # overrides it. Re-applying the position shortly after mapping
+        # (once immediately, once again after the WM has settled) makes
+        # our placement win instead of the WM's default centering.
+        self.after_idle(self._position_bottom_left)
+        self.after(150, self._position_bottom_left)
+
+    def _position_bottom_left(self, margin_x: int = 10, margin_y: int = 10):
         self.update_idletasks()
         sh = self.winfo_screenheight()
         h = self.winfo_height()
-        margin_x, margin_y = 10, 10
         x = margin_x
         y = max(0, sh - h - margin_y)
         self.geometry(f"+{x}+{y}")
