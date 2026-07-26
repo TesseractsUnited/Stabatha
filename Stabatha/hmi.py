@@ -374,6 +374,7 @@ class BridgeHMI(tk.Tk):
         self.geometry("1100x720")
         self.minsize(860, 540)
         self.configure(bg=BG)
+        self._maximize_on_startup()
 
         self.folder         = tk.StringVar(value=str(Path(start_folder).resolve()))
         self.strike_files:  list[dict] = []
@@ -425,6 +426,24 @@ class BridgeHMI(tk.Tk):
         # Auto-connect on startup if Phidget library is available
         if HAS_PHIDGET:
             self.after(500, self._auto_connect)
+
+    def _maximize_on_startup(self):
+        """Maximize the window on launch. The "correct" call differs by
+        platform/window manager (Windows vs. the Pi's Linux desktop), so
+        try each in turn and fall back to manually sizing to the full
+        screen if none of the WM-level maximize hints are supported."""
+        try:
+            self.state("zoomed")  # Windows, and many Linux WMs (Tk >= 8.6)
+            return
+        except tk.TclError:
+            pass
+        try:
+            self.attributes("-zoomed", True)  # X11 fallback
+            return
+        except tk.TclError:
+            pass
+        self.update_idletasks()
+        self.geometry(f"{self.winfo_screenwidth()}x{self.winfo_screenheight()}+0+0")
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Styles
