@@ -2,7 +2,7 @@
 
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 from datetime import datetime
 from pathlib import Path
 
@@ -43,7 +43,8 @@ KINGDOMS = (
 class StrikeFeedbackDialog(tk.Toplevel):
     """Non-modal post-strike calibration feedback (slider 0-5)."""
 
-    def __init__(self, parent, strike_path: str, on_slider_moved=None, on_written=None):
+    def __init__(self, parent, strike_path: str, on_slider_moved=None, on_written=None,
+                 on_close=None):
         super().__init__(parent)
         self.title("Strike Feedback")
         self.configure(bg=BG)
@@ -53,7 +54,10 @@ class StrikeFeedbackDialog(tk.Toplevel):
         self._strike_path = strike_path
         self._on_slider_moved = on_slider_moved
         self._on_written = on_written
+        self._on_close = on_close
+        self._closed = False
         self.slider_moved = False
+        self.protocol("WM_DELETE_WINDOW", self._handle_close)
 
         tk.Label(self, text="How was your calibration?", fg=TEXT, bg=BG,
                  font=("Segoe UI", 11)).pack(pady=(16, 8), padx=16)
@@ -74,7 +78,7 @@ class StrikeFeedbackDialog(tk.Toplevel):
 
         btn_row = ttk.Frame(self, padding=(16, 8, 16, 14))
         btn_row.pack(fill="x")
-        ttk.Button(btn_row, text="Done", command=self.destroy).pack(side="right")
+        ttk.Button(btn_row, text="Done", command=self._handle_close).pack(side="right")
 
         self.update_idletasks()
         px = parent.winfo_rootx() + parent.winfo_width() // 2
@@ -98,6 +102,13 @@ class StrikeFeedbackDialog(tk.Toplevel):
 
     def get_value(self) -> float:
         return round(float(self._value_var.get()), 1)
+
+    def _handle_close(self):
+        if not self._closed:
+            self._closed = True
+            if self._on_close:
+                self._on_close()
+        self.destroy()
 
 
 class StrikeEditDialog(tk.Toplevel):
@@ -433,12 +444,7 @@ class BridgeHMI(tk.Tk):
                   font=("Segoe UI", 8)).pack(anchor="w")
         self._r_max_record_s = tk.DoubleVar(value=3.0)
         ttk.Spinbox(cap, from_=0.5, to=30.0, increment=0.5,
-                    textvariable=self._r_max_record_s, width=8).pack(anchor="w", pady=(2, 8))
-        ttk.Label(cap, text="Trigger reset hold (s)", foreground=TEXT,
-                  font=("Segoe UI", 8)).pack(anchor="w")
-        self._r_reset_hold_s = tk.DoubleVar(value=3.0)
-        ttk.Spinbox(cap, from_=0.1, to=30.0, increment=0.5,
-                    textvariable=self._r_reset_hold_s, width=8).pack(anchor="w", pady=(2, 0))
+                    textvariable=self._r_max_record_s, width=8).pack(anchor="w", pady=(2, 0))
 
     def _build_live_panel(self, parent):
         live = ttk.Frame(parent)
@@ -599,7 +605,7 @@ class BridgeHMI(tk.Tk):
         load_row.pack(fill="x", pady=(0, 6))
         tk.Label(load_row, text="Known load:", fg=TEXT, bg=BG,
                  font=("Segoe UI", 9)).pack(side="left")
-        self._cal_load_var = tk.DoubleVar(value=10.0)
+        self._cal_load_var = tk.DoubleVar(value=8.465)
         ttk.Entry(load_row, textvariable=self._cal_load_var, width=10).pack(side="left", padx=6)
         tk.Label(load_row, text="lbf", fg=TEXT, bg=BG,
                  font=("Segoe UI", 9)).pack(side="left")
@@ -631,6 +637,8 @@ class BridgeHMI(tk.Tk):
         bot.pack(fill="x", side="bottom")
         ttk.Button(bot, text="Save Calibration",
                    style="Accent.TButton", command=self._cal_save).pack(side="left", padx=(0, 8))
+        ttk.Button(bot, text="Load Calibration",
+                   command=self._cal_load_from_file).pack(side="left", padx=(0, 8))
         ttk.Button(bot, text="Reset",
                    style="Red.TButton", command=self._cal_reset).pack(side="left")
         tk.Label(bot, textvariable=self._cal_status_var,
@@ -713,6 +721,27 @@ class BridgeHMI(tk.Tk):
                 f"Saved  {Path(saved_path).name}  ({datetime.now().strftime('%H:%M:%S')})")
         except Exception as exc:
             messagebox.showerror("Save error", str(exc))
+
+    def _cal_load_from_file(self):
+        path = filedialog.askopenfilename(
+            title="Load Calibration",
+            initialdir=str(ensure_data_dir()),
+            filetypes=[("Calibration JSON", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            ok = self._cal.load_from_path(path)
+        except Exception as exc:
+            messagebox.showerror("Load error", str(exc))
+            return
+        if not ok:
+            messagebox.showerror("Load error", f"Could not read calibration from:\n{path}")
+            return
+        self._cal_refresh()
+        self._sync_trigger_calibration_gate()
+        self._cal_status_var.set(
+            f"Loaded  {Path(path).name}  ({datetime.now().strftime('%H:%M:%S')})")
 
     def _cal_reset(self):
         if not messagebox.askyesno("Reset", "Clear calibration data for Channel 0?"):
@@ -1022,14 +1051,34 @@ class BridgeHMI(tk.Tk):
         def on_moved():
             if self._pending_feedback:
                 self._pending_feedback["slider_moved"] = True
+            self._rearm_after_feedback()
+
+        def on_closed():
+            self._rearm_after_feedback()
 
         dialog = StrikeFeedbackDialog(
-            self, path, on_slider_moved=on_moved, on_written=self._on_strike_json_written)
+            self, path, on_slider_moved=on_moved, on_written=self._on_strike_json_written,
+            on_close=on_closed)
         self._pending_feedback = {
             "path": path,
             "dialog": dialog,
             "slider_moved": False,
+            "rearmed": False,
         }
+
+    def _rearm_after_feedback(self):
+        """Re-arm the trigger once calibration feedback has been entered
+        (or the feedback dialog has been dismissed), per pending feedback.
+        The engine still confirms the force has settled below the trigger
+        threshold before it actually starts watching for the next strike."""
+        pending = self._pending_feedback
+        if pending is not None:
+            if pending.get("rearmed"):
+                return
+            pending["rearmed"] = True
+        self._engine.arm()
+        self._log_append(
+            "Feedback recorded -- rearming (confirming force has settled) ...", "info")
 
     def _apply_engine_config(self) -> bool:
         """Push current UI settings into the engine. Must be called on the main thread."""
@@ -1039,7 +1088,6 @@ class BridgeHMI(tk.Tk):
         #e.serial_number           = serial if serial else None
         e.data_rate               = float(self._r_data_rate.get())
         e.max_record_seconds      = float(self._r_max_record_s.get())
-        e.reset_hold_seconds      = float(self._r_reset_hold_s.get())
         e.calibration             = self._cal
 
         # Trigger threshold is always entered in lbf.
@@ -1206,7 +1254,6 @@ class BridgeHMI(tk.Tk):
                 self._logged_trigger = False
 
             elif state == RecorderEngine.DISARMED:
-                self._set_banner("DISARMED", TEXT)
                 self._btn_arm.configure(
                     state="normal" if self._cal.is_calibrated else "disabled")
                 self._btn_disarm.configure(state="disabled")
@@ -1224,14 +1271,14 @@ class BridgeHMI(tk.Tk):
                 self._set_banner("SAVING ...", TEXT)
 
             elif state == RecorderEngine.SETTLING:
-                self._set_banner("SETTLING -- WAITING FOR RESET", YELLOW)
+                self._set_banner("SETTLING -- CONFIRMING FORCE BELOW THRESHOLD", YELLOW)
                 self._btn_connect.configure(state="disabled")
                 self._btn_disconnect.configure(state="normal")
                 self._btn_arm.configure(state="disabled")
                 self._btn_disarm.configure(state="normal")
                 self._log_append(
-                    f"Force must stay below threshold for "
-                    f"{e.reset_hold_seconds:.1f}s before the trigger re-arms ...", "info")
+                    f"Confirming force stays below threshold for "
+                    f"{e.reset_hold_seconds:.1f}s before rearming ...", "info")
 
             elif state == RecorderEngine.ERROR:
                 self._set_banner("ERROR", RED)
@@ -1248,6 +1295,14 @@ class BridgeHMI(tk.Tk):
                 self._btn_disconnect.configure(state="disabled")
                 self._btn_arm.configure(state="disabled")
                 self._btn_disarm.configure(state="disabled")
+
+        # ── Keep the DISARMED banner in sync with pending-feedback status ──────
+        if state == RecorderEngine.DISARMED:
+            pending = self._pending_feedback
+            if pending and not pending.get("rearmed"):
+                self._set_banner("DISARMED -- AWAITING FEEDBACK", YELLOW)
+            else:
+                self._set_banner("DISARMED", TEXT)
 
         # ── Progress counter while recording ──────────────────────────────────
         if state == RecorderEngine.RECORDING:
@@ -1272,6 +1327,8 @@ class BridgeHMI(tk.Tk):
             else:
                 self.refresh_file_list()
 
+            self._log_append(
+                "Trigger disarmed -- enter calibration feedback to rearm.", "info")
             if e.saved_path:
                 self._open_strike_feedback(e.saved_path)
 

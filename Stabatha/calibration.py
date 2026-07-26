@@ -2,7 +2,11 @@
 
 from datetime import datetime
 
-from file_access import load_calibration_json, save_calibration_json
+from file_access import (
+    load_calibration_json,
+    load_calibration_json_from_path,
+    save_calibration_json,
+)
 
 
 class CalibrationStore:
@@ -54,6 +58,13 @@ class CalibrationStore:
 
     def load(self, folder: str = None) -> bool:
         data = load_calibration_json(folder)
+        if data is None:
+            return False
+        self._d.update(data)
+        return True
+
+    def load_from_path(self, path: str) -> bool:
+        data = load_calibration_json_from_path(path)
         if data is None:
             return False
         self._d.update(data)

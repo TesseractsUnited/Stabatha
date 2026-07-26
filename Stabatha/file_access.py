@@ -143,3 +143,15 @@ def save_calibration_json(cal_data: dict) -> str:
     with open(path, "w") as f:
         json.dump(cal_data, f, indent=2)
     return str(path)
+
+
+def load_calibration_json_from_path(path: str) -> dict | None:
+    """Load raw calibration dict from an arbitrary JSON file path."""
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        if "channels" in data:
+            data = data["channels"][0]
+        return data
+    except Exception:
+        return None

@@ -27,8 +27,9 @@ PHIDGET_BRIDGE_MAX_DATA_RATE_HZ = 1200
 # Post-trigger-only capture: record until force drops below the trigger
 # threshold, or this many seconds have elapsed since the trigger fired.
 POST_TRIGGER_MAX_SECONDS = 3.0
-# The trigger will not re-arm until the force has stayed below the
-# trigger threshold continuously for this many seconds.
+# After re-arming is requested (e.g. once feedback has been entered), the
+# trigger will not actually start watching for the next strike until the
+# force has stayed below the trigger threshold continuously for this long.
 TRIGGER_RESET_HOLD_SECONDS = 3.0
 
 STRIKE_META_FIELDS = [

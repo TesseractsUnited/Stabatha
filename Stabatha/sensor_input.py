@@ -43,8 +43,8 @@ class RecorderEngine:
     WAITING = "waiting"
     RECORDING = "recording"
     SAVING = "saving"
-    SETTLING = "settling"
     DISARMED = "disarmed"
+    SETTLING = "settling"
     ERROR = "error"
 
     def __init__(self):
@@ -57,6 +57,7 @@ class RecorderEngine:
         self._stop_evt = threading.Event()
         self._disarm_evt = threading.Event()
         self._attach_evt = threading.Event()
+        self._trigger_evt = threading.Event()
         self._thread = None
 
         self.serial_number = None
@@ -66,14 +67,14 @@ class RecorderEngine:
         # Post-trigger-only capture: keep recording until the force drops
         # below trigger_threshold or this many seconds have elapsed.
         self.max_record_seconds = POST_TRIGGER_MAX_SECONDS
-        # The trigger will not re-arm until the force has stayed below
-        # trigger_threshold continuously for this many seconds.
+        # Once re-arming is requested, the force must stay below
+        # trigger_threshold continuously for this long before the trigger
+        # actually starts watching for the next strike.
         self.reset_hold_seconds = TRIGGER_RESET_HOLD_SECONDS
         self.save_folder = "."
         self.calibration: CalibrationStore | None = None
         self.metadata_provider: Callable[[], dict] | None = None
 
-        self._triggered = False
         self.saved_path = ""
         self.last_strike: StrikeData | None = None
         self.capture_index = 0
@@ -85,6 +86,7 @@ class RecorderEngine:
         self._stop_evt.clear()
         self._disarm_evt.clear()
         self._attach_evt.clear()
+        self._trigger_evt.clear()
         self.error_msg = ""
         self.latest = None
         self.capture_index = 0
@@ -127,6 +129,13 @@ class RecorderEngine:
                 if self._disarm_evt.is_set():
                     self.state = self.DISARMED
                     self._wait_while_disarmed()
+                    if self._stop_evt.is_set():
+                        break
+                    # Re-arm was requested (e.g. feedback entered) -- confirm
+                    # the force has actually settled below the trigger
+                    # threshold before watching for the next strike.
+                    self.state = self.SETTLING
+                    self._wait_for_reset()
                     continue
                 self.state = self.RECORDING
                 self._record()
@@ -135,8 +144,11 @@ class RecorderEngine:
                 self.state = self.SAVING
                 self._save_strike()
                 self.capture_index += 1
-                self.state = self.SETTLING
-                self._wait_for_reset()
+                # Disarm immediately after a capture -- the trigger stays
+                # disarmed while the HMI shows the calibration feedback
+                # dialog, and re-arms only once the caller explicitly
+                # calls arm() (i.e. once feedback has been entered).
+                self.disarm()
             self.state = self.IDLE
         except Exception as exc:
             self.error_msg = str(exc)
@@ -145,14 +157,17 @@ class RecorderEngine:
             self._close_channel()
 
     def _reset_for_next_capture(self):
-        self._triggered = False
+        self._trigger_evt.clear()
         self.current_strike = None
         self.saved_path = ""
         self.capture_target = max(
             1, int(round(self.max_record_seconds * max(self._applied_data_rate, 1.0)))
         )
 
-    def _begin_strike(self):
+    def _begin_strike(self, trigger_value: float):
+        """Called from the Phidget callback the instant the trigger
+        threshold is crossed. Appends the triggering sample immediately
+        so it is not lost while the recorder thread wakes up."""
         strike = StrikeData()
         strike.datetime = datetime.now().isoformat(timespec="seconds")
         strike.data_rate_hz = self._applied_data_rate
@@ -163,11 +178,20 @@ class RecorderEngine:
         if self.metadata_provider:
             strike.apply_metadata(**self.metadata_provider())
 
+        ts = datetime.now().isoformat(timespec="milliseconds")
+        strike.append_sample(ts, trigger_value, pre_trigger=False, calibration=self.calibration)
+
         self.current_strike = strike
 
     def _wait_for_trigger(self):
-        while not self._triggered and not self._stop_evt.is_set() and not self._disarm_evt.is_set():
-            time.sleep(0.02)
+        """Block until the Phidget callback fires the trigger event.
+        Uses Event.wait() so the recorder wakes immediately when the
+        threshold is crossed, instead of polling on a fixed interval.
+        The short timeout just lets us re-check stop/disarm periodically."""
+        while (not self._trigger_evt.is_set()
+               and not self._stop_evt.is_set()
+               and not self._disarm_evt.is_set()):
+            self._trigger_evt.wait(timeout=0.05)
 
     def _wait_while_disarmed(self):
         while self._disarm_evt.is_set() and not self._stop_evt.is_set():
@@ -175,7 +199,9 @@ class RecorderEngine:
 
     def _wait_for_reset(self):
         """Block until the force has stayed below trigger_threshold
-        continuously for reset_hold_seconds before re-arming the trigger."""
+        continuously for reset_hold_seconds before re-arming the trigger.
+        Returns early (without confirming settle) if disarmed or stopped
+        again while waiting -- the caller re-checks those flags."""
         below_since: float | None = None
         while not self._stop_evt.is_set() and not self._disarm_evt.is_set():
             val = self.latest
@@ -229,28 +255,30 @@ class RecorderEngine:
 
     def _on_value_change(self, ch, value):
         self.latest = value
-        if self.state == self.WAITING and not self._triggered:
+        if self.state == self.WAITING and not self._trigger_evt.is_set():
             if value > self.trigger_threshold:
-                self._begin_strike()
-                self._triggered = True
+                self._begin_strike(value)
+                self._trigger_evt.set()
 
     def _record(self):
         """Record post-trigger samples until the force drops below
-        trigger_threshold, or max_record_seconds have elapsed."""
+        trigger_threshold, or max_record_seconds have elapsed. The very
+        first (triggering) sample was already appended by _begin_strike()
+        at the instant the threshold was crossed."""
         period = self._sample_period_s()
         strike = self.current_strike
         if strike is None:
             return
         start = time.monotonic()
         while not self._stop_evt.is_set():
+            if (time.monotonic() - start) >= self.max_record_seconds:
+                break
+            time.sleep(period)
             ts = datetime.now().isoformat(timespec="milliseconds")
             val = self.latest
             strike.append_sample(ts, val, pre_trigger=False, calibration=self.calibration)
             if val is not None and val < self.trigger_threshold:
                 break
-            if (time.monotonic() - start) >= self.max_record_seconds:
-                break
-            time.sleep(period)
         strike.post_trigger_count = len(strike.samples)
 
     def _save_strike(self):
