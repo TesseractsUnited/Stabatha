@@ -1396,6 +1396,11 @@ class BridgeHMI(tk.Tk):
         self.strike_files.sort(key=key_map.get(col, key_map["id"]), reverse=rev)
 
         keep_path = reselect_path if reselect_path is not None else self.selected_path
+        # Match by filename rather than a full-path string equality check --
+        # more robust against any path-representation differences (e.g. the
+        # save-time path vs. the glob-discovered path) that could otherwise
+        # silently prevent the newly-captured row from being reselected.
+        keep_name = Path(keep_path).name if keep_path else None
         self.file_tree.delete(*self.file_tree.get_children())
         reselect_item = None
         for meta in self.strike_files:
@@ -1411,13 +1416,20 @@ class BridgeHMI(tk.Tk):
                     meta["notes"],
                 ),
                 tags=(meta["path"],))
-            if keep_path and meta["path"] == keep_path:
+            if keep_name and Path(meta["path"]).name == keep_name:
                 reselect_item = item
 
         if reselect_item:
             self.file_tree.selection_set(reselect_item)
             self.file_tree.see(reselect_item)
-            self._on_file_select()
+            try:
+                self._on_file_select()
+            except Exception as exc:
+                self._log_append(f"Could not auto-select new strike: {exc}", "error")
+        elif keep_path:
+            self._log_append(
+                f"Could not find newly saved strike in file list: {Path(keep_path).name}",
+                "error")
 
     def _on_file_select(self, _event=None):
         sel = self.file_tree.selection()
