@@ -181,10 +181,11 @@ class StrikeFeedbackDialog(tk.Toplevel):
         btn_row.pack(fill="x")
         ttk.Button(btn_row, text="Done", command=self._handle_close).pack(side="right")
 
-        # Position low and toward the left edge of the physical screen
-        # (rather than centered on the parent window) so it's out of the
-        # way of the rest of the HMI and any on-screen keyboard.
-        self._position_bottom_left()
+        # Anchor the top-left corner near the left edge, 1/3 of the way
+        # down the screen -- low enough to be out of the way of the main
+        # HMI controls, but high enough to stay clear of an on-screen
+        # keyboard docked along the bottom of the touch screen.
+        self._position_dialog()
         self.deiconify()
         # Many window managers (common on a Pi) re-center a transient()
         # dialog over its parent the moment it's actually mapped, which
@@ -192,15 +193,14 @@ class StrikeFeedbackDialog(tk.Toplevel):
         # overrides it. Re-applying the position shortly after mapping
         # (once immediately, once again after the WM has settled) makes
         # our placement win instead of the WM's default centering.
-        self.after_idle(self._position_bottom_left)
-        self.after(150, self._position_bottom_left)
+        self.after_idle(self._position_dialog)
+        self.after(150, self._position_dialog)
 
-    def _position_bottom_left(self, margin_x: int = 10, margin_y: int = 10):
+    def _position_dialog(self, margin_x: int = 10):
         self.update_idletasks()
         sh = self.winfo_screenheight()
-        h = self.winfo_height()
         x = margin_x
-        y = max(0, sh - h - margin_y)
+        y = sh // 3
         self.geometry(f"+{x}+{y}")
 
     def _on_scale_change(self, _val):
