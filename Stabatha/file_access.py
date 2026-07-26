@@ -74,6 +74,38 @@ def update_strike_metadata(path: str, strike: StrikeData):
         json.dump(data, f, indent=2)
 
 
+# Cache of already-parsed strike metadata, keyed by file path, so that
+# repeated calls to find_strike_files() (e.g. after every single capture)
+# don't have to re-read and re-parse every accumulated strike file's full
+# JSON -- including its (potentially large, thousands-of-points) samples
+# array -- just to redisplay the same few metadata fields in the table.
+# Entries are invalidated by (mtime, size) so edits (feedback/metadata) are
+# still picked up.
+_metadata_cache: dict[str, tuple[float, int, dict]] = {}
+
+
+def _load_strike_metadata_cached(path: Path) -> dict | None:
+    """Return just the "metadata" dict from a strike JSON file -- never
+    parses/builds the samples array -- reusing a cached result when the
+    file's mtime/size haven't changed since it was last read."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    key = str(path)
+    cached = _metadata_cache.get(key)
+    if cached is not None and cached[0] == st.st_mtime and cached[1] == st.st_size:
+        return cached[2]
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    meta = data.get("metadata", {})
+    _metadata_cache[key] = (st.st_mtime, st.st_size, meta)
+    return meta
+
+
 def find_strike_files(folder: str) -> list[dict]:
     folder_path = Path(folder)
     files = []
@@ -82,26 +114,32 @@ def find_strike_files(folder: str) -> list[dict]:
         key=lambda p: _strike_datetime_from_filename(p) or datetime.min,
         reverse=True,
     )
+    seen = set()
     for path in paths:
-        try:
-            strike = load_strike(str(path))
-        except Exception:
+        meta = _load_strike_metadata_cached(path)
+        if meta is None:
             continue
-        impulse = strike.total_energy_lbf_s
-        feedback = strike.user_calibration_feedback
+        seen.add(str(path))
+        peak = float(meta.get("peak_force_lbf", 0.0) or 0.0)
+        impulse = meta.get("total_energy_lbf_s")
+        feedback = meta.get("user_calibration_feedback")
         files.append(
             {
                 "path": str(path),
                 "id": strike_id_from_filename(path),
-                "event": strike.event,
-                "name": strike.name,
-                "weapon_type": strike.weapon_type,
-                "peak_force_lbf": f"{strike.peak_force_lbf:.1f}",
-                "impulse": f"{impulse:.3f}" if impulse else "",
-                "notes": strike.notes or "",
+                "event": meta.get("event", ""),
+                "name": meta.get("name", ""),
+                "weapon_type": meta.get("weapon_type", ""),
+                "peak_force_lbf": f"{peak:.1f}",
+                "impulse": f"{float(impulse):.3f}" if impulse else "",
+                "notes": meta.get("notes") or "",
                 "feedback": format_calibration_feedback(feedback),
             }
         )
+    # Drop cache entries for files that no longer exist (e.g. deleted).
+    for stale_path in list(_metadata_cache):
+        if stale_path not in seen:
+            del _metadata_cache[stale_path]
     return files
 
 

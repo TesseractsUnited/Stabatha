@@ -40,6 +40,108 @@ KINGDOMS = (
 )
 
 
+class ListPickerDialog(tk.Toplevel):
+    """Touch-friendly modal picker: a scrollable list of large buttons.
+
+    Used instead of a native ttk.Combobox dropdown, whose OS-managed
+    popup auto-scrolls/jumps to the current selection in a way that's
+    awkward to hit accurately with a finger on a touchscreen. This gives
+    full control over sizing, scrolling, and touch-target size."""
+
+    def __init__(self, parent, title: str, options: tuple[str, ...], current: str):
+        super().__init__(parent)
+        self.title(title)
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        self.grab_set()
+        self.transient(parent)
+        self.result: str | None = None
+
+        ttk.Label(self, text=title, background=BG, foreground=TEXT,
+                  font=("Segoe UI", 12, "bold")).pack(pady=(12, 8), padx=16)
+
+        list_frame = ttk.Frame(self)
+        list_frame.pack(fill="both", expand=True, padx=12)
+
+        canvas = tk.Canvas(list_frame, bg=BG2, highlightthickness=0, width=320, height=420)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas, bg=BG2)
+        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        def on_wheel(event):
+            delta = event.delta
+            if delta == 0:
+                delta = 120 if getattr(event, "num", None) == 4 else -120
+            canvas.yview_scroll(-1 if delta > 0 else 1, "units")
+
+        # bind_all is scoped to this dialog's lifetime only (grab_set()
+        # above ensures nothing else has input focus while it's open) and
+        # is explicitly torn down in _cleanup() before the window closes,
+        # so it never leaks onto the rest of the app afterward.
+        canvas.bind_all("<MouseWheel>", on_wheel)
+        canvas.bind_all("<Button-4>", on_wheel)
+        canvas.bind_all("<Button-5>", on_wheel)
+
+        current_btn = None
+        for name in options:
+            is_current = (name == current)
+            btn = tk.Button(
+                inner, text=name, anchor="w", relief="flat", bd=0,
+                bg=ACCENT if is_current else BG2, fg="#ffffff" if is_current else TEXT,
+                activebackground=ACCENT, activeforeground="#ffffff",
+                font=("Segoe UI", 12), padx=14, pady=12,
+                command=lambda n=name: self._choose(n),
+            )
+            btn.pack(fill="x", pady=1)
+            if is_current:
+                current_btn = btn
+
+        ttk.Button(self, text="Cancel", command=self._cancel).pack(pady=(8, 14))
+
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.update_idletasks()
+
+        # Position the current selection in view once, immediately, on
+        # open -- no jumping around while the user is trying to tap.
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        total_h = inner.winfo_height()
+        if current_btn is not None and total_h > 0:
+            frac = max(0.0, min(1.0, (current_btn.winfo_y() - 40) / total_h))
+            canvas.yview_moveto(frac)
+
+        px = parent.winfo_rootx() + parent.winfo_width() // 2
+        py = parent.winfo_rooty() + parent.winfo_height() // 2
+        w, h = self.winfo_width(), self.winfo_height()
+        self.geometry(f"+{max(0, px - w // 2)}+{max(0, py - h // 2)}")
+
+    def _cleanup(self):
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            try:
+                self.unbind_all(seq)
+            except tk.TclError:
+                pass
+
+    def _choose(self, name: str):
+        self.result = name
+        self._cleanup()
+        self.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self._cleanup()
+        self.destroy()
+
+    @classmethod
+    def ask(cls, parent, title: str, options: tuple[str, ...], current: str) -> str | None:
+        dlg = cls(parent, title, options, current)
+        parent.wait_window(dlg)
+        return dlg.result
+
+
 class StrikeFeedbackDialog(tk.Toplevel):
     """Non-modal post-strike calibration feedback (slider 0-5)."""
 
@@ -153,8 +255,11 @@ class StrikeEditDialog(tk.Toplevel):
 
         tk.Label(form, text="Kingdom", fg=TEXT, bg=BG, width=14, anchor="e").grid(
             row=3, column=0, sticky="e", padx=(0, 10), pady=5)
-        ttk.Combobox(form, textvariable=self._v_kingdom, values=KINGDOMS,
-                     state="readonly", width=26).grid(row=3, column=1, sticky="ew", pady=5)
+        tk.Button(
+            form, textvariable=self._v_kingdom, anchor="w", relief="solid", bd=1,
+            bg=BG2, fg=TEXT, font=("Segoe UI", 10), padx=8, pady=4,
+            command=self._pick_kingdom,
+        ).grid(row=3, column=1, sticky="ew", pady=5)
 
         tk.Label(form, text="Rank", fg=TEXT, bg=BG, width=14, anchor="e").grid(
             row=4, column=0, sticky="e", padx=(0, 10), pady=5)
@@ -188,7 +293,8 @@ class StrikeEditDialog(tk.Toplevel):
             feedback_row, from_=0, to=5, orient="horizontal",
             variable=self._feedback_var, resolution=0.1,
             bg=BG, fg=TEXT, troughcolor=BG2, highlightthickness=0,
-            length=180, command=self._on_feedback_scale,
+            length=360, width=30, sliderlength=60, sliderrelief="raised",
+            command=self._on_feedback_scale,
         )
         self._feedback_scale.pack(side="left")
         tk.Label(feedback_row, textvariable=self._feedback_display, fg=GREEN, bg=BG,
@@ -212,6 +318,11 @@ class StrikeEditDialog(tk.Toplevel):
         w, h = self.winfo_width(), self.winfo_height()
         self.geometry(f"+{px - w // 2}+{py - h // 2}")
         bind_osk_tree(self)
+
+    def _pick_kingdom(self):
+        result = ListPickerDialog.ask(self, "Select Kingdom", KINGDOMS, self._v_kingdom.get())
+        if result is not None:
+            self._v_kingdom.set(result)
 
     def _on_feedback_scale(self, _val):
         self._feedback_display.set(f"{round(float(self._feedback_var.get()), 1):.1f}")
@@ -844,8 +955,11 @@ class BridgeHMI(tk.Tk):
 
         ttk.Label(info, text="Kingdom", foreground=TEXT, font=("Segoe UI", 9)).grid(
             row=row, column=0, sticky="w", padx=(0, 10), pady=6)
-        ttk.Combobox(info, textvariable=self._r_kingdom, values=KINGDOMS,
-                     state="readonly", width=28).grid(row=row, column=1, sticky="ew", pady=6)
+        tk.Button(
+            info, textvariable=self._r_kingdom, anchor="w", relief="solid", bd=1,
+            bg=BG2, fg=TEXT, font=("Segoe UI", 10), padx=8, pady=6,
+            command=self._pick_kingdom,
+        ).grid(row=row, column=1, sticky="ew", pady=6)
         row += 1
 
         ttk.Label(info, text="Rank", foreground=TEXT, font=("Segoe UI", 9)).grid(
@@ -1009,6 +1123,11 @@ class BridgeHMI(tk.Tk):
 
     def _get_strike_metadata(self) -> dict:
         return dict(self._strike_meta)
+
+    def _pick_kingdom(self):
+        result = ListPickerDialog.ask(self, "Select Kingdom", KINGDOMS, self._r_kingdom.get())
+        if result is not None:
+            self._r_kingdom.set(result)
 
     def _sync_strike_meta(self, *_args):
         self._strike_meta["event"] = self._r_event.get().strip()
