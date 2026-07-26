@@ -71,10 +71,7 @@ class StrikeFeedbackDialog(tk.Toplevel):
             bg=BG, fg=TEXT, troughcolor=BG2, highlightthickness=0,
             length=220, command=self._on_scale_change,
         )
-        scale.pack(side="left")
-        self._display_var = tk.StringVar(value="0.0")
-        tk.Label(row, textvariable=self._display_var, fg=GREEN, bg=BG,
-                 font=("Consolas", 12, "bold"), width=4).pack(side="left", padx=(8, 0))
+        scale.pack(side="left", fill="x", expand=True)
 
         btn_row = ttk.Frame(self, padding=(16, 8, 16, 14))
         btn_row.pack(fill="x")
@@ -87,18 +84,13 @@ class StrikeFeedbackDialog(tk.Toplevel):
         self.geometry(f"+{px - w // 2}+{py - h // 2}")
 
     def _on_scale_change(self, _val):
+        # Only note that the slider moved here -- writing to disk and
+        # refreshing the data table on every tick causes visible HMI lag.
+        # The value is persisted once, when the dialog actually closes.
         if not self.slider_moved:
             self.slider_moved = True
             if self._on_slider_moved:
                 self._on_slider_moved()
-        v = round(float(self._value_var.get()), 1)
-        self._display_var.set(f"{v:.1f}")
-        try:
-            update_strike_feedback(self._strike_path, v)
-            if self._on_written:
-                self._on_written(self._strike_path)
-        except Exception:
-            pass
 
     def get_value(self) -> float:
         return round(float(self._value_var.get()), 1)
@@ -106,6 +98,13 @@ class StrikeFeedbackDialog(tk.Toplevel):
     def _handle_close(self):
         if not self._closed:
             self._closed = True
+            if self.slider_moved:
+                try:
+                    update_strike_feedback(self._strike_path, self.get_value())
+                    if self._on_written:
+                        self._on_written(self._strike_path)
+                except Exception:
+                    pass
             if self._on_close:
                 self._on_close()
         self.destroy()
@@ -1051,9 +1050,11 @@ class BridgeHMI(tk.Tk):
         self._resolve_pending_feedback()
 
         def on_moved():
+            # Only track that feedback was entered -- do NOT rearm yet.
+            # Rearming happens once the dialog is dismissed (Done button
+            # or window close), via on_closed() below.
             if self._pending_feedback:
                 self._pending_feedback["slider_moved"] = True
-            self._rearm_after_feedback()
 
         def on_closed():
             self._rearm_after_feedback()
