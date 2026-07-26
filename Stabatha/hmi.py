@@ -184,10 +184,9 @@ class StrikeFeedbackDialog(tk.Toplevel):
         # (rather than centered on the parent window) so it's out of the
         # way of the rest of the HMI and any on-screen keyboard.
         self.update_idletasks()
-        sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
-        w, h = self.winfo_width(), self.winfo_height()
-        margin_x, margin_y = 30, 30
+        h = self.winfo_height()
+        margin_x, margin_y = 10, 10
         x = margin_x
         y = max(0, sh - h - margin_y)
         self.geometry(f"+{x}+{y}")
