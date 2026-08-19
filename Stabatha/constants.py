@@ -16,6 +16,7 @@ ORANGE = "#fb923c" #orange Color
 
 STRIKE_GLOB = "strike_*.json"
 CAL_FILE = "calibration.json"
+INDEX_FILE = "strike_index.json"
 DATA_DIR = Path(__file__).parent / "data"
 CAL_SAMPLES = 50
 STRIKE_SCHEMA_VERSION = 1
@@ -56,6 +57,10 @@ STRIKE_META_FIELDS = [
 
 
 def ensure_data_dir() -> Path:
-    """Create ./data/ beside this package if missing; return its Path."""
+    """Create the data folder if missing; return its Path.
+
+    DATA_DIR defaults to ./data beside this package and may be redirected
+    at startup from config.json via app_config.apply_to_runtime().
+    """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     return DATA_DIR

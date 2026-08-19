@@ -1,0 +1,64 @@
+{
+  // Sample rate requested from the PhidgetBridge, in Hz.
+  // Hardware is limited to 1-1200 Hz on the 1046; the program clamps to that range.
+  "data_rate_hz": 1200,
+
+  // Force level (pounds-force) that starts a capture when crossed on the way up.
+  "trigger_threshold_lbf": 1.0,
+
+  // Longest a capture will run after trigger, in seconds.
+  // Recording also stops early once force drops back below the trigger threshold.
+  "max_record_seconds": 3.0,
+
+  // After feedback is entered, force must stay below the trigger this many seconds
+  // before the trigger re-arms for the next strike.
+  "reset_hold_seconds": 3.0,
+
+  // Seconds of pre-trigger readings averaged into the synthetic "zero point"
+  // sample prepended to each capture.
+  "baseline_window_seconds": 1.0,
+
+  // How many live samples are averaged when capturing zero or a cal point.
+  "cal_samples": 50,
+
+  // Default known-load value (lbf) shown on the Calibrate tab.
+  "cal_known_load_lbf": 8.465,
+
+  // PhidgetBridge serial number. Leave "" to auto-detect the first attached device.
+  "phidget_serial": "",
+
+  // Folder for strike files, strike_index.json, and calibration.json.
+  // A relative path is resolved from the Stabatha program folder.
+  "data_dir": "data",
+
+  "window": {
+    // true = start maximized. false = use width/height below.
+    "maximize": true,
+    // Window size in pixels when maximize is false.
+    "width": 1100,
+    "height": 720,
+    // Smallest size the user can resize the window to.
+    "min_width": 860,
+    "min_height": 540
+  },
+
+  // Hex colors for the parchment theme. Restart the program after changing these.
+  "colors": {
+    // Main window background (parchment).
+    "bg": "#d9d1c7",
+    // Text boxes, tables, and other inset panels.
+    "bg2": "#ede5da",
+    // Buttons, selected tabs, and highlights.
+    "accent": "#d17f13",
+    // Normal label and body text.
+    "text": "#0a0a0a",
+    // Success / recording / calibrated status.
+    "green": "#4ade80",
+    // Waiting / settling / warning status.
+    "yellow": "#fbbf24",
+    // Errors and not-calibrated status.
+    "red": "#f87171",
+    // Live lbf readout and chart trace.
+    "orange": "#fb923c"
+  }
+}

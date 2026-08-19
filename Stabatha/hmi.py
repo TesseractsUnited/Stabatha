@@ -6,13 +6,18 @@ from tkinter import ttk, messagebox, filedialog
 from datetime import datetime
 from pathlib import Path
 
+from app_config import CONFIG_FILE, load_config, save_config
+
+load_config()
+
 from constants import (
-    ACCENT, BG, BG2, CAL_FILE, CAL_SAMPLES, PHIDGET_BRIDGE_MAX_DATA_RATE_HZ, TEXT, GREEN,
+    ACCENT, BG, BG2, CAL_FILE, INDEX_FILE, PHIDGET_BRIDGE_MAX_DATA_RATE_HZ, TEXT, GREEN,
     ORANGE, RED, YELLOW, ensure_data_dir,
 )
 from calibration import CalibrationStore
 from file_access import (
-    find_strike_files,
+    StrikeIndex,
+    export_strikes_csv,
     load_strike,
     strike_to_tabular,
     update_strike_feedback,
@@ -222,7 +227,7 @@ class StrikeFeedbackDialog(tk.Toplevel):
                 try:
                     update_strike_feedback(self._strike_path, self.get_value())
                     if self._on_written:
-                        self._on_written(self._strike_path)
+                        self._on_written(self._strike_path, feedback=self.get_value())
                 except Exception:
                     pass
             if self._on_close:
@@ -370,11 +375,14 @@ class BridgeHMI(tk.Tk):
 
     def __init__(self, start_folder: str = "."):
         super().__init__()
+        self._cfg = load_config()
         self.title("Stabatha")
-        self.geometry("1100x720")
-        self.minsize(860, 540)
+        win = self._cfg["window"]
+        self.geometry(f"{int(win['width'])}x{int(win['height'])}")
+        self.minsize(int(win["min_width"]), int(win["min_height"]))
         self.configure(bg=BG)
-        self._maximize_on_startup()
+        if win.get("maximize", True):
+            self._maximize_on_startup()
 
         self.folder         = tk.StringVar(value=str(Path(start_folder).resolve()))
         self.strike_files:  list[dict] = []
@@ -388,16 +396,19 @@ class BridgeHMI(tk.Tk):
             "kingdom": "NA", "rank": "NA", "notes": "",
         }
         self._pending_feedback = None
-        self._data_tab_index: int | None = None
 
         self._cal     = CalibrationStore()
         self._engine  = RecorderEngine()
         self._sampler = CalSampler(self._engine)
 
         self._engine.save_folder = str(ensure_data_dir())
+        serial = str(self._cfg.get("phidget_serial") or "").strip()
+        self._engine.serial_number = serial if serial else None
         self._engine.calibration = self._cal
         self._engine.metadata_provider = self._get_strike_metadata
         self._cal_loaded_at_startup = self._cal.load()   # loads from ./data/calibration.json
+        self._index = StrikeIndex()
+        self._index_startup = self._index.load_and_reconcile()
 
         # Cal sampler pending action: "zero" | "point" | None
         self._cal_pending: str | None = None
@@ -419,6 +430,28 @@ class BridgeHMI(tk.Tk):
                 f"Loaded saved calibration from {CAL_FILE}  "
                 f"(scale={self._cal.scale_factor:.4f}, zero={self._cal.zero_offset:+.5f}"
                 f"{', ' + self._cal.timestamp if self._cal.timestamp else ''}).", "ok")
+
+        self._log_append(
+            f"Loaded {CONFIG_FILE}  "
+            f"(rate={self._cfg['data_rate_hz']} Hz, "
+            f"threshold={self._cfg['trigger_threshold_lbf']} lbf, "
+            f"max_record={self._cfg['max_record_seconds']}s, "
+            f"settle={self._cfg['reset_hold_seconds']}s, "
+            f"data_dir={ensure_data_dir()}, "
+            f"serial={serial or 'auto'}).", "ok")
+
+        stats = getattr(self, "_index_startup", None) or {}
+        added = stats.get("added", 0)
+        removed = stats.get("removed", 0)
+        count = stats.get("count", len(self._index.entries))
+        if added or removed:
+            self._log_append(
+                f"Strike index {INDEX_FILE}: {count} files"
+                f"{f', added {added}' if added else ''}"
+                f"{f', removed {removed}' if removed else ''}.", "ok")
+        else:
+            self._log_append(
+                f"Loaded strike index {INDEX_FILE}  ({count} files).", "ok")
 
         self._poll_recorder()
         self._poll_cal_sampler()
@@ -532,10 +565,6 @@ class BridgeHMI(tk.Tk):
             tab = ttk.Frame(self.notebook)
             self.notebook.add(tab, text=text)
             builder(tab)
-            if "Data" in text:
-                self._data_tab_index = self.notebook.index("end") - 1
-
-        self.notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  RECORD TAB
@@ -563,7 +592,7 @@ class BridgeHMI(tk.Tk):
         #ttk.Entry(dev, textvariable=self._r_serial, width=18).pack(anchor="w", pady=(2, 6))
         ttk.Label(dev, text="Data rate (Hz)", foreground=TEXT,
                   font=("Segoe UI", 8)).pack(anchor="w")
-        self._r_data_rate = tk.IntVar(value=1200)
+        self._r_data_rate = tk.IntVar(value=int(self._cfg["data_rate_hz"]))
         ttk.Spinbox(
             dev,
             from_=1,
@@ -583,7 +612,7 @@ class BridgeHMI(tk.Tk):
         trg = ttk.LabelFrame(cfg, text="Trigger  (Channel 0)", padding=10)
         trg.pack(fill="x", pady=(0, 8))
 
-        self._r_threshold = tk.DoubleVar(value=1.0)
+        self._r_threshold = tk.DoubleVar(value=float(self._cfg["trigger_threshold_lbf"]))
         thresh_row = ttk.Frame(trg)
         thresh_row.pack(fill="x", pady=(0, 6))
         ttk.Label(thresh_row, text="Threshold:", foreground=TEXT,
@@ -597,7 +626,7 @@ class BridgeHMI(tk.Tk):
         cap.pack(fill="x", pady=(0, 8))
         ttk.Label(cap, text="Max recording duration (s)", foreground=TEXT,
                   font=("Segoe UI", 8)).pack(anchor="w")
-        self._r_max_record_s = tk.DoubleVar(value=3.0)
+        self._r_max_record_s = tk.DoubleVar(value=float(self._cfg["max_record_seconds"]))
         ttk.Spinbox(cap, from_=0.5, to=30.0, increment=0.5,
                     textvariable=self._r_max_record_s, width=8).pack(anchor="w", pady=(2, 0))
 
@@ -702,7 +731,8 @@ class BridgeHMI(tk.Tk):
             "Step 1 - Remove all load, then click  \"Capture Zero\".\n"
             "Step 2 - Apply a known reference load (lbf), enter the value, "
             "then click  \"Capture Cal Point\".\n"
-            f"Each step averages  {CAL_SAMPLES}  live samples (~2.5 s).  "
+            f"Each step averages  {int(self._cfg['cal_samples'])}  live samples "
+            f"(~{int(self._cfg['cal_samples']) * 0.05:.1f} s).  "
             "Click  \"Save\"  when done."
         )
         tk.Label(note_frame, text=note, fg=TEXT, bg=BG,
@@ -760,7 +790,7 @@ class BridgeHMI(tk.Tk):
         load_row.pack(fill="x", pady=(0, 6))
         tk.Label(load_row, text="Known load:", fg=TEXT, bg=BG,
                  font=("Segoe UI", 9)).pack(side="left")
-        self._cal_load_var = tk.DoubleVar(value=8.465)
+        self._cal_load_var = tk.DoubleVar(value=float(self._cfg["cal_known_load_lbf"]))
         ttk.Entry(load_row, textvariable=self._cal_load_var, width=10).pack(side="left", padx=6)
         tk.Label(load_row, text="lbf", fg=TEXT, bg=BG,
                  font=("Segoe UI", 9)).pack(side="left")
@@ -835,8 +865,8 @@ class BridgeHMI(tk.Tk):
             return
         self._cal_pending = "zero"
         self._cal_set_buttons("disabled")
-        self._cal_prog_lbl.set(f"Sampling zero  ({CAL_SAMPLES} pts) ...")
-        self._sampler.start()
+        self._cal_prog_lbl.set(f"Sampling zero  ({int(self._cfg['cal_samples'])} pts) ...")
+        self._sampler.start(n=int(self._cfg["cal_samples"]))
 
     def _cal_capture_point(self):
         if not self._sampler_ready():
@@ -846,8 +876,8 @@ class BridgeHMI(tk.Tk):
             return
         self._cal_pending = "point"
         self._cal_set_buttons("disabled")
-        self._cal_prog_lbl.set(f"Sampling cal point  ({CAL_SAMPLES} pts) ...")
-        self._sampler.start()
+        self._cal_prog_lbl.set(f"Sampling cal point  ({int(self._cfg['cal_samples'])} pts) ...")
+        self._sampler.start(n=int(self._cfg["cal_samples"]))
 
     def _sampler_ready(self) -> bool:
         if self._sampler.state == CalSampler.RUNNING:
@@ -1037,8 +1067,12 @@ class BridgeHMI(tk.Tk):
         tb = ttk.Frame(parent, padding=(8, 6, 8, 4))
         tb.pack(fill="x")
 
+        self._data_state_lbl = tk.Label(tb, textvariable=self._state_var,
+                                         fg=TEXT, bg=BG, font=("Segoe UI", 11, "bold"))
+        self._data_state_lbl.pack(side="left")
+
         ttk.Button(tb, text="Refresh", style="Accent.TButton",
-                   command=self.refresh_file_list).pack(side="right")
+                   command=self._files_refresh_from_disk).pack(side="right")
         ttk.Button(tb, text="Edit Metadata",
                    command=self._files_edit_metadata).pack(side="right", padx=(0, 6))
         ttk.Button(tb, text="Delete",
@@ -1096,7 +1130,7 @@ class BridgeHMI(tk.Tk):
         dlg = StrikeEditDialog(self, strike, path)
         self.wait_window(dlg)
         if dlg.saved:
-            self._on_strike_json_written(path)
+            self._on_strike_json_written(path, strike=strike)
 
     def _files_sort(self, col: str):
         """Sort file list by clicked column header."""
@@ -1122,6 +1156,7 @@ class BridgeHMI(tk.Tk):
         except Exception as exc:
             messagebox.showerror("Delete failed", str(exc))
             return
+        self._index.remove(path)
         # Clear viewer tabs if this file was selected
         if self.selected_path == path:
             self.selected_path = None
@@ -1165,10 +1200,14 @@ class BridgeHMI(tk.Tk):
         wrap = ttk.Frame(parent, padding=16)
         wrap.pack(fill="both", expand=True)
 
+        header = ttk.Frame(wrap)
+        header.pack(fill="x", pady=(0, 10))
         ttk.Label(
-            wrap, text="Calibration Feedback Scale", foreground=TEXT,
+            header, text="Calibration Feedback Scale", foreground=TEXT,
             font=("Segoe UI", 12, "bold"),
-        ).pack(anchor="w", pady=(0, 10))
+        ).pack(side="left")
+        ttk.Button(header, text="Export", style="Accent.TButton",
+                   command=self._export_strikes_csv).pack(side="right")
 
         for line in self.NOTES_SCALE:
             row = ttk.Frame(wrap)
@@ -1177,6 +1216,25 @@ class BridgeHMI(tk.Tk):
                       font=("Segoe UI", 11)).pack(side="left", padx=(0, 8), anchor="n")
             ttk.Label(row, text=line, foreground=TEXT, font=("Segoe UI", 11),
                       wraplength=560, justify="left").pack(side="left", anchor="w")
+
+    def _export_strikes_csv(self):
+        default_name = f"strikes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        path = filedialog.asksaveasfilename(
+            title="Export strikes",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialdir=str(ensure_data_dir()),
+            initialfile=default_name,
+        )
+        if not path:
+            return
+        try:
+            n = export_strikes_csv(self._index.entries, path)
+        except Exception as exc:
+            messagebox.showerror("Export failed", str(exc))
+            return
+        self._log_append(f"Exported {n} strikes to {Path(path).name}", "done")
+        messagebox.showinfo("Export complete", f"Wrote {n} strikes to:\n{path}")
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Recorder control
@@ -1222,15 +1280,17 @@ class BridgeHMI(tk.Tk):
             return
         dialog = pending.get("dialog")
         path = pending.get("path")
+        value = None
         if dialog and dialog.winfo_exists():
             if pending.get("slider_moved"):
                 try:
-                    update_strike_feedback(path, dialog.get_value())
+                    value = dialog.get_value()
+                    update_strike_feedback(path, value)
                 except Exception:
                     pass
             dialog.destroy()
         if path and pending and pending.get("slider_moved"):
-            self._on_strike_json_written(path)
+            self._on_strike_json_written(path, feedback=value)
         self._pending_feedback = None
 
     def _open_strike_feedback(self, path: str):
@@ -1279,16 +1339,31 @@ class BridgeHMI(tk.Tk):
         """Push current UI settings into the engine. Must be called on the main thread."""
         e = self._engine
         e.save_folder             = str(ensure_data_dir())
-        #serial                    = self._r_serial.get().strip()
-        #e.serial_number           = serial if serial else None
+        serial                    = str(self._cfg.get("phidget_serial") or "").strip()
+        e.serial_number           = serial if serial else None
         e.data_rate               = float(self._r_data_rate.get())
         e.max_record_seconds      = float(self._r_max_record_s.get())
+        e.reset_hold_seconds      = float(self._cfg["reset_hold_seconds"])
+        e.baseline_window_seconds = float(self._cfg["baseline_window_seconds"])
         e.calibration             = self._cal
 
         # Trigger threshold is always entered in lbf.
         self._sync_trigger_calibration_gate()
         self._sync_strike_meta()
+        self._persist_config()
         return True
+
+    def _persist_config(self):
+        """Write current UI/runtime settings back to config.json."""
+        try:
+            self._cfg["data_rate_hz"] = int(self._r_data_rate.get())
+            self._cfg["trigger_threshold_lbf"] = float(self._r_threshold.get())
+            self._cfg["max_record_seconds"] = float(self._r_max_record_s.get())
+            if hasattr(self, "_cal_load_var"):
+                self._cfg["cal_known_load_lbf"] = float(self._cal_load_var.get())
+            save_config(self._cfg)
+        except Exception:
+            pass
 
     def _auto_connect(self):
         """Called once via after() at startup -- applies config then connects off-thread."""
@@ -1308,10 +1383,10 @@ class BridgeHMI(tk.Tk):
     def _start_connect_thread(self):
         """Log the intent and launch e.connect() on a daemon thread."""
         e      = self._engine
-        #serial = self._r_serial.get().strip()
+        serial = e.serial_number or "auto-detect"
         self._log_clear()
         self._log_append(
-            "Connecting to PhidgetBridge  CH0(auto-detect)", "info")
+            f"Connecting to PhidgetBridge  CH0 ({serial})", "info")
         raw_thresh = float(self._r_threshold.get())
         self._log_append(
             f"Trigger: {raw_thresh:.4f} lbf  =  {e.trigger_threshold:+.6f} V/V  (rising)",
@@ -1518,7 +1593,7 @@ class BridgeHMI(tk.Tk):
                 f"({n_total} samples, ~{duration_s:.2f}s)  -> {e.last_saved_name}", "done")
             self._prog_lbl.set(f"0 / ~{e.capture_target}")
             if e.saved_path:
-                self._on_strike_json_written(e.saved_path)
+                self._on_strike_json_written(e.saved_path, strike=e.last_strike)
             else:
                 self.refresh_file_list()
 
@@ -1532,6 +1607,8 @@ class BridgeHMI(tk.Tk):
     def _set_banner(self, text: str, colour: str):
         self._state_var.set(text)
         self._state_lbl.configure(fg=colour)
+        if hasattr(self, "_data_state_lbl"):
+            self._data_state_lbl.configure(fg=colour)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Folder / file helpers
@@ -1539,20 +1616,28 @@ class BridgeHMI(tk.Tk):
 
     # (folder browsing removed -- all files saved to ./data/)
 
-    def _on_notebook_tab_changed(self, _event=None):
-        idx = getattr(self, "_data_tab_index", None)
-        if idx is None:
-            return
-        try:
-            if self.notebook.index(self.notebook.select()) == idx:
-                self.refresh_file_list()
-        except tk.TclError:
-            pass
+    def _files_refresh_from_disk(self):
+        """Rescan the data folder against the index (manual Refresh)."""
+        stats = self._index.load_and_reconcile()
+        added, removed = stats.get("added", 0), stats.get("removed", 0)
+        if added or removed:
+            self._log_append(
+                f"Index refreshed: {stats.get('count', 0)} files"
+                f"{f', added {added}' if added else ''}"
+                f"{f', removed {removed}' if removed else ''}.", "info")
+        self.refresh_file_list()
 
-    def _on_strike_json_written(self, path: str | None = None):
-        """Refresh file list after a strike JSON file is created or updated."""
+    def _on_strike_json_written(self, path: str | None = None, strike=None, feedback=None):
+        """Update the in-memory index after a strike JSON is created or edited."""
         if not hasattr(self, "file_tree"):
             return
+        if path:
+            if strike is not None:
+                self._index.upsert_strike(path, strike)
+            elif feedback is not None:
+                self._index.set_feedback(path, feedback)
+            else:
+                self._index.upsert_from_file(path)
         reselect = path or self.selected_path
         if path:
             self.selected_path = path
@@ -1570,8 +1655,7 @@ class BridgeHMI(tk.Tk):
         return full_id
 
     def refresh_file_list(self, *, reselect_path: str | None = None):
-        folder = ensure_data_dir()
-        self.strike_files = find_strike_files(str(folder))
+        self.strike_files = list(self._index.entries)
 
         col = getattr(self, "_files_sort_col", "id")
         rev = getattr(self, "_files_sort_rev", True)
@@ -1703,6 +1787,7 @@ class BridgeHMI(tk.Tk):
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
     def destroy(self):
+        self._persist_config()
         self._resolve_pending_feedback()
         self._engine.disconnect()
         super().destroy()

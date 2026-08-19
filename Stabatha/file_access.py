@@ -1,10 +1,11 @@
 """Strike JSON files and calibration persistence."""
 
+import csv
 import json
 from datetime import datetime
 from pathlib import Path
 
-from constants import CAL_FILE, STRIKE_GLOB, ensure_data_dir
+from constants import CAL_FILE, INDEX_FILE, STRIKE_GLOB, ensure_data_dir
 from strike_data import StrikeData
 
 
@@ -52,13 +53,6 @@ def strike_id_from_filename(path: Path) -> str:
         return ""
 
 
-def _strike_datetime_from_filename(path: Path) -> datetime | None:
-    try:
-        return datetime.strptime(path.stem[7:], "%Y%m%d_%H%M%S")
-    except ValueError:
-        return None
-
-
 def update_strike_metadata(path: str, strike: StrikeData):
     """Rewrite editable metadata fields on a saved strike file."""
     with open(path) as f:
@@ -74,73 +68,221 @@ def update_strike_metadata(path: str, strike: StrikeData):
         json.dump(data, f, indent=2)
 
 
-# Cache of already-parsed strike metadata, keyed by file path, so that
-# repeated calls to find_strike_files() (e.g. after every single capture)
-# don't have to re-read and re-parse every accumulated strike file's full
-# JSON -- including its (potentially large, thousands-of-points) samples
-# array -- just to redisplay the same few metadata fields in the table.
-# Entries are invalidated by (mtime, size) so edits (feedback/metadata) are
-# still picked up.
-_metadata_cache: dict[str, tuple[float, int, dict]] = {}
+_INDEX_FIELDS = (
+    "filename", "id", "event", "name", "weapon_type", "kingdom", "rank",
+    "notes", "peak_force_lbf", "impulse", "feedback",
+)
 
 
-def _load_strike_metadata_cached(path: Path) -> dict | None:
-    """Return just the "metadata" dict from a strike JSON file -- never
-    parses/builds the samples array -- reusing a cached result when the
-    file's mtime/size haven't changed since it was last read."""
-    try:
-        st = path.stat()
-    except OSError:
-        return None
-    key = str(path)
-    cached = _metadata_cache.get(key)
-    if cached is not None and cached[0] == st.st_mtime and cached[1] == st.st_size:
-        return cached[2]
+def _index_path() -> Path:
+    return ensure_data_dir() / INDEX_FILE
+
+
+def iter_strike_paths(folder: Path | None = None) -> list[Path]:
+    """Strike JSON files in the data folder, excluding the index file itself."""
+    folder_path = Path(folder) if folder is not None else ensure_data_dir()
+    return [
+        p for p in folder_path.glob(STRIKE_GLOB)
+        if p.name != INDEX_FILE
+    ]
+
+
+def _read_strike_metadata(path: Path) -> dict | None:
+    """Load only the metadata object from a strike JSON file."""
     try:
         with open(path) as f:
             data = json.load(f)
     except Exception:
         return None
-    meta = data.get("metadata", {})
-    _metadata_cache[key] = (st.st_mtime, st.st_size, meta)
-    return meta
+    meta = data.get("metadata")
+    return meta if isinstance(meta, dict) else None
 
 
-def find_strike_files(folder: str) -> list[dict]:
-    folder_path = Path(folder)
-    files = []
-    paths = list(folder_path.glob(STRIKE_GLOB))
-    paths.sort(
-        key=lambda p: _strike_datetime_from_filename(p) or datetime.min,
-        reverse=True,
-    )
-    seen = set()
-    for path in paths:
-        meta = _load_strike_metadata_cached(path)
+def index_entry_from_meta(path: Path, meta: dict) -> dict:
+    """Build a table/index row from a strike file path and its metadata dict."""
+    peak = float(meta.get("peak_force_lbf", 0.0) or 0.0)
+    impulse = meta.get("total_energy_lbf_s")
+    return {
+        "filename": path.name,
+        "path": str(path),
+        "id": strike_id_from_filename(path),
+        "event": meta.get("event", "") or "",
+        "name": meta.get("name", "") or "",
+        "weapon_type": meta.get("weapon_type", "") or "",
+        "kingdom": meta.get("kingdom", "") or "",
+        "rank": meta.get("rank", "") or "",
+        "peak_force_lbf": f"{peak:.1f}",
+        "impulse": f"{float(impulse):.3f}" if impulse else "",
+        "notes": meta.get("notes") or "",
+        "feedback": format_calibration_feedback(meta.get("user_calibration_feedback")),
+    }
+
+
+def index_entry_from_strike(path: str | Path, strike: StrikeData) -> dict:
+    """Build a table/index row from an in-memory StrikeData object."""
+    path = Path(path)
+    return {
+        "filename": path.name,
+        "path": str(path),
+        "id": strike_id_from_filename(path),
+        "event": strike.event or "",
+        "name": strike.name or "",
+        "weapon_type": strike.weapon_type or "",
+        "kingdom": strike.kingdom or "",
+        "rank": strike.rank or "",
+        "peak_force_lbf": f"{strike.peak_force_lbf:.1f}",
+        "impulse": f"{strike.total_energy_lbf_s:.3f}" if strike.total_energy_lbf_s else "",
+        "notes": strike.notes or "",
+        "feedback": format_calibration_feedback(strike.user_calibration_feedback),
+    }
+
+
+class StrikeIndex:
+    """In-memory strike table index, persisted as a single JSON file.
+
+    Table refreshes read this object in RAM. The JSON file is rewritten
+    when a strike is added, edited, deleted, or when startup reconcile
+    finds the directory and the index are out of sync.
+    """
+
+    def __init__(self):
+        self.entries: list[dict] = []
+        self._by_name: dict[str, dict] = {}
+
+    def load_and_reconcile(self) -> dict:
+        """Load index.json, drop missing files, add unindexed strike files.
+
+        Returns counts describing what changed. Strike files are opened
+        only when they are present on disk but missing from the index.
+        """
+        folder = ensure_data_dir()
+        disk_names = {p.name for p in iter_strike_paths(folder)}
+        loaded = self._load_file()
+
+        kept: list[dict] = []
+        for raw in loaded:
+            name = raw.get("filename") or Path(str(raw.get("path", ""))).name
+            if not name or name == INDEX_FILE or name not in disk_names:
+                continue
+            path = folder / name
+            entry = {field: raw.get(field, "") for field in _INDEX_FIELDS}
+            entry["filename"] = name
+            entry["path"] = str(path)
+            if not entry.get("id"):
+                entry["id"] = strike_id_from_filename(path)
+            kept.append(entry)
+
+        known = {e["filename"] for e in kept}
+        added = 0
+        for name in sorted(disk_names - known):
+            path = folder / name
+            meta = _read_strike_metadata(path)
+            if meta is None:
+                continue
+            kept.append(index_entry_from_meta(path, meta))
+            added += 1
+
+        removed = len(loaded) - len(kept) + added
+        self._set_entries(kept)
+        index_path = _index_path()
+        dirty = added > 0 or removed > 0 or not index_path.exists()
+        if dirty:
+            self.save()
+        return {
+            "count": len(self.entries),
+            "added": added,
+            "removed": max(0, removed),
+            "saved": dirty,
+        }
+
+    def _load_file(self) -> list[dict]:
+        path = _index_path()
+        if not path.exists():
+            return []
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except Exception:
+            return []
+        strikes = data.get("strikes", [])
+        return strikes if isinstance(strikes, list) else []
+
+    def _set_entries(self, entries: list[dict]):
+        self.entries = entries
+        self._by_name = {e["filename"]: e for e in entries}
+
+    def save(self):
+        payload = {
+            "schema_version": 1,
+            "strikes": [
+                {field: entry.get(field, "") for field in _INDEX_FIELDS}
+                for entry in self.entries
+            ],
+        }
+        with open(_index_path(), "w") as f:
+            json.dump(payload, f, indent=2)
+
+    def upsert(self, entry: dict):
+        name = entry["filename"]
+        entry = dict(entry)
+        entry["path"] = str(ensure_data_dir() / name)
+        existing = self._by_name.get(name)
+        if existing is not None:
+            existing.update(entry)
+        else:
+            self.entries.append(entry)
+            self._by_name[name] = entry
+        self.save()
+
+    def upsert_strike(self, path: str, strike: StrikeData):
+        self.upsert(index_entry_from_strike(path, strike))
+
+    def upsert_from_file(self, path: str):
+        file_path = Path(path)
+        meta = _read_strike_metadata(file_path)
         if meta is None:
-            continue
-        seen.add(str(path))
-        peak = float(meta.get("peak_force_lbf", 0.0) or 0.0)
-        impulse = meta.get("total_energy_lbf_s")
-        feedback = meta.get("user_calibration_feedback")
-        files.append(
-            {
-                "path": str(path),
-                "id": strike_id_from_filename(path),
-                "event": meta.get("event", ""),
-                "name": meta.get("name", ""),
-                "weapon_type": meta.get("weapon_type", ""),
-                "peak_force_lbf": f"{peak:.1f}",
-                "impulse": f"{float(impulse):.3f}" if impulse else "",
-                "notes": meta.get("notes") or "",
-                "feedback": format_calibration_feedback(feedback),
-            }
-        )
-    # Drop cache entries for files that no longer exist (e.g. deleted).
-    for stale_path in list(_metadata_cache):
-        if stale_path not in seen:
-            del _metadata_cache[stale_path]
-    return files
+            return
+        self.upsert(index_entry_from_meta(file_path, meta))
+
+    def set_feedback(self, path: str, value: float | int | None):
+        name = Path(path).name
+        entry = self._by_name.get(name)
+        if entry is None:
+            self.upsert_from_file(path)
+            entry = self._by_name.get(name)
+            if entry is None:
+                return
+        entry["feedback"] = format_calibration_feedback(value)
+        self.save()
+
+    def remove(self, path: str):
+        name = Path(path).name
+        self.entries = [e for e in self.entries if e["filename"] != name]
+        self._by_name.pop(name, None)
+        self.save()
+
+
+CSV_EXPORT_COLUMNS = (
+    ("Strike ID", "id"),
+    ("Event", "event"),
+    ("Name", "name"),
+    ("Weapon", "weapon_type"),
+    ("peak_force_lbf", "peak_force_lbf"),
+    ("Impulse", "impulse"),
+    ("calibration", "feedback"),
+    ("notes", "notes"),
+)
+
+
+def export_strikes_csv(entries: list[dict], path: str) -> int:
+    """Write strike-index rows to a CSV file. Returns the number of data rows."""
+    rows = sorted(entries, key=lambda e: e.get("id", ""), reverse=True)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([header for header, _ in CSV_EXPORT_COLUMNS])
+        for entry in rows:
+            writer.writerow([entry.get(key, "") for _, key in CSV_EXPORT_COLUMNS])
+    return len(rows)
 
 
 def strike_to_tabular(strike: StrikeData) -> tuple[list[str], list[list]]:
